@@ -275,13 +275,13 @@ not just hand-assembled bytes. This is what makes the runtime generally useful.
 
 ### 4. Control Flow
 
-* [ ] `if / else / end`
-* [ ] `block / end` with `br` (branch-to-end)
-* [ ] `loop / end` with `br` (branch-to-top)
-* [ ] `br_if`
-* [ ] `return`
-* [ ] `drop`, `select`
-* [ ] `nop`, `unreachable`
+* [x] `if / else / end`
+* [x] `block / end` with `br` (branch-to-end)
+* [x] `loop / end` with `br` (branch-to-top)
+* [x] `br_if`
+* [x] `return`
+* [x] `drop`, `select`
+* [x] `nop`, `unreachable`
 
 ---
 

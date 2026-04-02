@@ -8,10 +8,16 @@ mod shell;
 mod vga;
 mod wasm;
 
-use bootloader_api::{entry_point, BootInfo};
+use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use core::panic::PanicInfo;
 
-entry_point!(kernel_main);
+const BOOTLOADER_CONFIG: BootloaderConfig = {
+    let mut c = BootloaderConfig::new_default();
+    c.kernel_stack_size = 256 * 1024; // 256 KiB — plenty for nested WASM calls
+    c
+};
+
+entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 
 // ---------------------------------------------------------------------------
 // Macros
