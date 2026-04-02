@@ -134,9 +134,9 @@ Start tiny—support only:
 
 ### 3. Execution Engine
 
-* [ ] Stack implementation
-* [ ] Instruction loop
-* [ ] Function call handling
+* [x] Stack implementation
+* [x] Instruction loop
+* [x] Function call handling
 
 ---
 
