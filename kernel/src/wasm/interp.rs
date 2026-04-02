@@ -18,6 +18,10 @@ const OP_CALL:      u8 = 0x10;
 const OP_LOCAL_GET: u8 = 0x20;
 const OP_LOCAL_SET: u8 = 0x21;
 const OP_LOCAL_TEE: u8 = 0x22;
+const OP_I32_LOAD:    u8 = 0x28;
+const OP_I32_LOAD8_U: u8 = 0x2D;
+const OP_I32_STORE:   u8 = 0x36;
+const OP_I32_STORE8:  u8 = 0x3A;
 const OP_I32_EQZ:   u8 = 0x45;
 const OP_I32_EQ:    u8 = 0x46;
 const OP_I32_NE:    u8 = 0x47;
@@ -323,6 +327,68 @@ impl<'a> Interpreter<'a> {
                     self.frames[fi].locals[idx] = val;
                 }
 
+                // ── i32.load <memarg> ────────────────────────────────────────
+                OP_I32_LOAD => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea = addr.wrapping_add(offset as usize);
+                    if ea + 4 > self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    let val = i32::from_le_bytes([
+                        self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3],
+                    ]);
+                    self.v_push(val)?;
+                }
+
+                // ── i32.load8_u <memarg> ──────────────────────────────────────
+                OP_I32_LOAD8_U => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea = addr.wrapping_add(offset as usize);
+                    if ea >= self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    self.v_push(self.mem[ea] as i32)?;
+                }
+
+                // ── i32.store <memarg> ────────────────────────────────────────
+                OP_I32_STORE => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let val  = self.v_pop()?;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea = addr.wrapping_add(offset as usize);
+                    if ea + 4 > self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    let bytes = val.to_le_bytes();
+                    self.mem[ea..ea+4].copy_from_slice(&bytes);
+                }
+
+                // ── i32.store8 <memarg> ───────────────────────────────────────
+                OP_I32_STORE8 => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let val  = self.v_pop()?;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea = addr.wrapping_add(offset as usize);
+                    if ea >= self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    self.mem[ea] = val as u8;
+                }
+
                 // ── i32.const <sleb128> ───────────────────────────────────────
                 OP_I32_CONST => {
                     let fi   = self.fdepth - 1;
@@ -385,6 +451,16 @@ impl<'a> Interpreter<'a> {
         }
         Ok(())
     }
+}
+
+// ── Memory immediate helper ───────────────────────────────────────────────────
+
+/// Parse a memory immediate (align + offset). Returns (offset, bytes_consumed).
+/// The alignment hint is consumed but ignored.
+fn read_memarg(bytes: &[u8]) -> Option<(u32, usize)> {
+    let (_align, n1) = read_u32_leb128(bytes)?;
+    let (offset, n2) = read_u32_leb128(&bytes[n1..])?;
+    Some((offset, n1 + n2))
 }
 
 // ── Section parsers ───────────────────────────────────────────────────────────

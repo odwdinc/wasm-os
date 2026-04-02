@@ -266,10 +266,10 @@ not just hand-assembled bytes. This is what makes the runtime generally useful.
 
 ### 3. Memory Operations
 
-* [ ] `i32.load` (4-byte load from linear memory)
-* [ ] `i32.store` (4-byte store)
-* [ ] `i32.load8_u`, `i32.store8`
-* [ ] Bounds-check all memory accesses → `InterpError::MemOutOfBounds`
+* [x] `i32.load` (4-byte load from linear memory)
+* [x] `i32.store` (4-byte store)
+* [x] `i32.load8_u`, `i32.store8`
+* [x] Bounds-check all memory accesses → `InterpError::MemOutOfBounds`
 
 ---
 
