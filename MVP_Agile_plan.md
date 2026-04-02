@@ -248,10 +248,10 @@ not just hand-assembled bytes. This is what makes the runtime generally useful.
 
 ### 1. Local Variables
 
-* [ ] `local.get <idx>`
-* [ ] `local.set <idx>`
-* [ ] `local.tee <idx>`
-* [ ] Allocate locals per frame (extend `Frame` with a locals array)
+* [x] `local.get <idx>`
+* [x] `local.set <idx>`
+* [x] `local.tee <idx>`
+* [x] Allocate locals per frame (extend `Frame` with a locals array)
 
 ---
 
