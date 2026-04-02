@@ -105,7 +105,7 @@ fn init_memory(data_section: &[u8], mem: &mut [u8]) -> bool {
 
 // ── Import counting ───────────────────────────────────────────────────────────
 
-fn count_func_imports(import_section: Option<&[u8]>) -> usize {
+pub fn count_func_imports(import_section: Option<&[u8]>) -> usize {
     let bytes = match import_section { Some(b) => b, None => return 0 };
     let mut cur = 0usize;
 

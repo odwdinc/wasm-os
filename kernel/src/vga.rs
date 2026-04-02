@@ -280,6 +280,13 @@ pub fn init(buf: &mut [u8], info: FrameBufferInfo) {
     }
 }
 
+/// Clear the screen and reset the cursor to (0, 0).
+pub fn clear_screen() {
+    if let Some(w) = WRITER.lock().as_mut() {
+        w.clear_screen();
+    }
+}
+
 /// Called by the print! macro.
 pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;

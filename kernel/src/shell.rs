@@ -79,7 +79,10 @@ pub fn run_command(line: &str) {
         "help"    => cmd_help(),
         "echo"    => cmd_echo(&argv[1..argc]),
         "history" => cmd_history(),
-        "wasm"    => cmd_wasm(),
+        "clear"   => cmd_clear(),
+        "ls"      => cmd_ls(),
+        "info"    => cmd_info(argv.get(1).copied().unwrap_or("")),
+        "run"     => cmd_run(argv.get(1).copied().unwrap_or("")),
         _         => { crate::println!("unknown command: {}", argv[0]); }
     }
 }
@@ -122,7 +125,10 @@ fn cmd_help() {
     crate::println!("  help               show this message");
     crate::println!("  echo <args>        print arguments");
     crate::println!("  history            show command history");
-    crate::println!("  wasm               run built-in WASM test");
+    crate::println!("  clear              clear the screen");
+    crate::println!("  ls                 list registered .wasm files");
+    crate::println!("  info <name>        show module info");
+    crate::println!("  run <name>         execute a .wasm module");
 }
 
 fn cmd_echo(args: &[&str]) {
@@ -142,9 +148,59 @@ fn cmd_history() {
     }
 }
 
-fn cmd_wasm() {
-    match crate::wasm::engine::run(crate::wasm::engine::HELLO_WASM, "main") {
+fn cmd_clear() {
+    crate::vga::clear_screen();
+}
+
+fn cmd_ls() {
+    let mut found = false;
+    crate::fs::for_each_file(|name| {
+        crate::println!("{}", name);
+        found = true;
+    });
+    if !found {
+        crate::println!("(no files registered)");
+    }
+}
+
+fn cmd_info(name: &str) {
+    if name.is_empty() {
+        crate::println!("usage: info <name>");
+        return;
+    }
+    let data = match crate::fs::find_file(name) {
+        Some(d) => d,
+        None    => { crate::println!("not found: {}", name); return; }
+    };
+    let module = match crate::wasm::loader::load(data) {
+        Ok(m)  => m,
+        Err(e) => { crate::println!("load error: {}", e.as_str()); return; }
+    };
+    let func_count = module.function_section
+        .and_then(|s| crate::wasm::loader::read_u32_leb128(s))
+        .map(|(n, _)| n)
+        .unwrap_or(0);
+    let import_count = crate::wasm::engine::count_func_imports(module.import_section);
+    let export_count = module.export_section
+        .and_then(|s| crate::wasm::loader::read_u32_leb128(s))
+        .map(|(n, _)| n)
+        .unwrap_or(0);
+    crate::println!("file:    {}", name);
+    crate::println!("funcs:   {} defined, {} imported", func_count, import_count);
+    crate::println!("exports: {}", export_count);
+}
+
+fn cmd_run(name: &str) {
+    if name.is_empty() {
+        crate::println!("usage: run <name>");
+        return;
+    }
+    let data = match crate::fs::find_file(name) {
+        Some(d) => d,
+        None    => { crate::println!("not found: {}", name); return; }
+    };
+    match crate::wasm::engine::run(data, "main") {
         Ok(_)  => {}
-        Err(e) => { crate::println!("WASM error: {}", e.as_str()); }
+        Err(e) => { crate::println!("error: {}", e.as_str()); }
     }
 }

@@ -201,11 +201,11 @@ Run named `.wasm` files from a terminal command with entry-point discovery.
 
 ### 3. Shell Commands
 
-* [ ] `ls` — list all registered files
-* [ ] `info <name>` — show section counts, func count, import count (replaces `cat`)
-* [ ] `run <name>` — look up file, parse exports, execute entry `”main”`
-* [ ] `clear` — clear the terminal screen
-* [ ] Remove old `wasm` test command
+* [x] `ls` — list all registered files
+* [x] `info <name>` — show section counts, func count, import count (replaces `cat`)
+* [x] `run <name>` — look up file, parse exports, execute entry `”main”`
+* [x] `clear` — clear the terminal screen
+* [x] Remove old `wasm` test command
 
 ---
 
