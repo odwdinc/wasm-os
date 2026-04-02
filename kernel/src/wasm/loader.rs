@@ -72,6 +72,41 @@ pub fn read_u32_leb128(bytes: &[u8]) -> Option<(u32, usize)> {
     None // ran out of bytes before the terminating byte
 }
 
+// ── Export section lookup ────────────────────────────────────────────────────
+
+/// Search the export section for an export named `name` with kind = func (0).
+/// Returns the absolute function index (imports included) if found.
+pub fn find_export(module: &Module, name: &str) -> Option<u32> {
+    let bytes = module.export_section?;
+    let mut cur = 0usize;
+
+    let (count, n) = read_u32_leb128(&bytes[cur..])?;
+    cur += n;
+
+    for _ in 0..count as usize {
+        // Name
+        let (name_len, n) = read_u32_leb128(&bytes[cur..])?;
+        cur += n;
+        let name_end = cur + name_len as usize;
+        if name_end > bytes.len() { return None; }
+        let export_name = core::str::from_utf8(&bytes[cur..name_end]).ok()?;
+        cur = name_end;
+
+        // Kind
+        if cur >= bytes.len() { return None; }
+        let kind = bytes[cur]; cur += 1;
+
+        // Index
+        let (index, n) = read_u32_leb128(&bytes[cur..])?;
+        cur += n;
+
+        if kind == 0 && export_name == name {
+            return Some(index);
+        }
+    }
+    None
+}
+
 // ── Main entry point ─────────────────────────────────────────────────────────
 /// Parse `bytes` as a WASM binary.
 /// On success returns a `Module` whose slices reference `bytes` directly.

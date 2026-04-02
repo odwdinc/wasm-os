@@ -143,7 +143,7 @@ fn cmd_history() {
 }
 
 fn cmd_wasm() {
-    match crate::wasm::engine::run(crate::wasm::engine::HELLO_WASM, 1) {
+    match crate::wasm::engine::run(crate::wasm::engine::HELLO_WASM, "main") {
         Ok(_)  => {}
         Err(e) => { crate::println!("WASM error: {}", e.as_str()); }
     }

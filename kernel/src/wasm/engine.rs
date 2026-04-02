@@ -3,7 +3,7 @@
 //! `run(bytes, func_idx)` — parse, init memory, dispatch host calls, execute.
 //! `HELLO_WASM`           — embedded test module that prints "Hello from WASM!\n".
 
-use super::loader::{load, LoadError, read_u32_leb128};
+use super::loader::{load, find_export, LoadError, read_u32_leb128};
 use super::interp::{Interpreter, InterpError, read_i32_leb128};
 
 // ── Error type ───────────────────────────────────────────────────────────────
@@ -11,6 +11,7 @@ use super::interp::{Interpreter, InterpError, read_i32_leb128};
 pub enum RunError {
     Load(LoadError),
     Interp(InterpError),
+    EntryNotFound,
 }
 
 impl RunError {
@@ -18,6 +19,7 @@ impl RunError {
         match self {
             RunError::Load(e)   => e.as_str(),
             RunError::Interp(e) => e.as_str(),
+            RunError::EntryNotFound => "entry point not found in exports",
         }
     }
 }
@@ -160,11 +162,14 @@ fn count_func_imports(import_section: Option<&[u8]>) -> usize {
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Parse `bytes` as a WASM binary, initialise linear memory from data segments,
-/// wire up host functions, call `func_idx`, and return the top of the value
-/// stack (if any) after execution.
-pub fn run(bytes: &[u8], func_idx: usize) -> Result<Option<i32>, RunError> {
+/// wire up host functions, look up `entry` in the export section, execute it,
+/// and return the top of the value stack (if any) after execution.
+pub fn run(bytes: &[u8], entry: &str) -> Result<Option<i32>, RunError> {
     let module       = load(bytes).map_err(RunError::Load)?;
     let import_count = count_func_imports(module.import_section);
+
+    let func_idx = find_export(&module, entry)
+        .ok_or(RunError::EntryNotFound)? as usize;
 
     let mut interp = Interpreter::new(&module, import_count)
         .map_err(RunError::Interp)?;

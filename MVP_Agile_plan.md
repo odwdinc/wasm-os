@@ -183,19 +183,19 @@ Run named `.wasm` files from a terminal command with entry-point discovery.
 
 ### 1. In-Memory File System
 
-* [ ] `File` struct (`name: &str`, `data: &[u8]`)
-* [ ] Fixed-size file table (`[Option<File>; MAX_FILES]`)
-* [ ] `register_file(name, data)` and `find_file(name)`
-* [ ] Pre-register `HELLO_WASM` as `”hello.wasm”` and a second module as `”greet.wasm”` at boot
+* [x] `File` struct (`name: &str`, `data: &[u8]`)
+* [x] Fixed-size file table (`[Option<File>; MAX_FILES]`)
+* [x] `register_file(name, data)` and `find_file(name)`
+* [x] Pre-register `HELLO_WASM` as `”hello.wasm”` and a second module as `”greet.wasm”` at boot
 
 ---
 
 ### 2. Export Section Parsing
 
-* [ ] Parse export section in `loader.rs` (already captured, needs iterator)
-* [ ] `find_export(module, name) -> Option<u32>` — returns func index by name
-* [ ] Change `engine::run(bytes, func_idx)` → `engine::run(bytes, entry: &str)` using export lookup
-* [ ] Fallback: if no export named `entry`, return `RunError::EntryNotFound`
+* [x] Parse export section in `loader.rs` (already captured, needs iterator)
+* [x] `find_export(module, name) -> Option<u32>` — returns func index by name
+* [x] Change `engine::run(bytes, func_idx)` → `engine::run(bytes, entry: &str)` using export lookup
+* [x] Fallback: if no export named `entry`, return `RunError::EntryNotFound`
 
 ---
 

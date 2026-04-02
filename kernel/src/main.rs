@@ -51,7 +51,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     fs::register_file("greet.wasm", wasm::engine::GREET_WASM);
 
     // Sprint 2.5: auto-run the embedded WASM module on boot.
-    if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, 1) {
+    if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, "main") {
         println!("wasm boot error: {}", e.as_str());
     }
 
