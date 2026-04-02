@@ -19,13 +19,7 @@ In short:
 
 ---
 
-## ✨ Current Status (MVP)
-
-✔ Boots on bare metal (via emulator)
-✔ Terminal interface
-✔ Keyboard input
-✔ Loads and executes `.wasm` modules
-✔ Basic host function support (`print`)
+## ✨ [Current Status (MVP)](MVP_Agile_plan.md)
 
 ---
 
@@ -65,9 +59,9 @@ In short:
 |  - Host function interface  |
 +-----------------------------+
 |   Minimal Kernel (Rust)     |
-|  - Memory                  |
-|  - Interrupts              |
-|  - Devices                 |
+|  - Memory                   |
+|  - Interrupts               |
+|  - Devices                  |
 +-----------------------------+
 |         Hardware            |
 +-----------------------------+
@@ -82,17 +76,21 @@ In short:
 * Rust (nightly recommended)
 * `x86_64-unknown-none` target
 * QEMU
-
+```bash
+# setup the build env
+./scripts/setup.sh
+./scripts/dev-env.sh
+```
 ---
 
 ### Build & Run
 
 ```bash
 # build the OS image
-cargo build
+./tools/build-image.sh
 
 # run in QEMU
-cargo run
+./tools/run-qemu.sh
 ```
 
 ---
