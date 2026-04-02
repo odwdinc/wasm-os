@@ -116,9 +116,9 @@ Load and execute a minimal WebAssembly module.
 
 ### 1. WASM Binary Loader
 
-* [ ] Load `.wasm` from memory (hardcoded first)
-* [ ] Parse header (`\0asm`)
-* [ ] Validate basic structure
+* [x] Load `.wasm` from memory (hardcoded first)
+* [x] Parse header (`\0asm`)
+* [x] Validate basic structure
 
 ---
 

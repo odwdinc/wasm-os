@@ -5,6 +5,7 @@ mod drivers;
 mod keyboard;
 mod shell;
 mod vga;
+mod wasm;
 
 use bootloader_api::{entry_point, BootInfo};
 use core::panic::PanicInfo;
@@ -27,10 +28,10 @@ macro_rules! println {
     () => {
         $crate::print!("\n")
     };
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
         $crate::print!($($arg)*);
-        $crate::print!("\n")
-    };
+        $crate::print!("\n");
+    }};
 }
 
 // ---------------------------------------------------------------------------
