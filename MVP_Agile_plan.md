@@ -257,10 +257,10 @@ not just hand-assembled bytes. This is what makes the runtime generally useful.
 
 ### 2. Arithmetic & Comparison (i32)
 
-* [ ] `i32.add`, `i32.sub`, `i32.mul`
-* [ ] `i32.and`, `i32.or`, `i32.xor`, `i32.shl`, `i32.shr_s`
-* [ ] `i32.eq`, `i32.ne`, `i32.lt_s`, `i32.gt_s`, `i32.le_s`, `i32.ge_s`
-* [ ] `i32.eqz`
+* [x] `i32.add`, `i32.sub`, `i32.mul`
+* [x] `i32.and`, `i32.or`, `i32.xor`, `i32.shl`, `i32.shr_s`
+* [x] `i32.eq`, `i32.ne`, `i32.lt_s`, `i32.gt_s`, `i32.le_s`, `i32.ge_s`
+* [x] `i32.eqz`
 
 ---
 

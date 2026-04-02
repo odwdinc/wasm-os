@@ -18,7 +18,22 @@ const OP_CALL:      u8 = 0x10;
 const OP_LOCAL_GET: u8 = 0x20;
 const OP_LOCAL_SET: u8 = 0x21;
 const OP_LOCAL_TEE: u8 = 0x22;
+const OP_I32_EQZ:   u8 = 0x45;
+const OP_I32_EQ:    u8 = 0x46;
+const OP_I32_NE:    u8 = 0x47;
+const OP_I32_LT_S:  u8 = 0x48;
+const OP_I32_GT_S:  u8 = 0x4A;
+const OP_I32_LE_S:  u8 = 0x4C;
+const OP_I32_GE_S:  u8 = 0x4E;
 const OP_I32_CONST: u8 = 0x41;
+const OP_I32_ADD:   u8 = 0x6A;
+const OP_I32_SUB:   u8 = 0x6B;
+const OP_I32_MUL:   u8 = 0x6C;
+const OP_I32_AND:   u8 = 0x71;
+const OP_I32_OR:    u8 = 0x72;
+const OP_I32_XOR:   u8 = 0x73;
+const OP_I32_SHL:   u8 = 0x74;
+const OP_I32_SHR_S: u8 = 0x75;
 
 // ── Capacity limits ───────────────────────────────────────────────────────────
 pub const MAX_FUNCS:   usize = 32;  // max WASM-defined functions per module
@@ -340,6 +355,30 @@ impl<'a> Interpreter<'a> {
                         self.push_frame(body_idx)?;
                     }
                 }
+
+                // ── i32 unary comparison ──────────────────────────────────────
+                OP_I32_EQZ => {
+                    let a = self.v_pop()?;
+                    self.v_push(if a == 0 { 1 } else { 0 })?;
+                }
+
+                // ── i32 binary comparisons ────────────────────────────────────
+                OP_I32_EQ  => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a == b { 1 } else { 0 })?; }
+                OP_I32_NE  => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a != b { 1 } else { 0 })?; }
+                OP_I32_LT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <  b { 1 } else { 0 })?; }
+                OP_I32_GT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >  b { 1 } else { 0 })?; }
+                OP_I32_LE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <= b { 1 } else { 0 })?; }
+                OP_I32_GE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >= b { 1 } else { 0 })?; }
+
+                // ── i32 arithmetic ────────────────────────────────────────────
+                OP_I32_ADD  => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_add(b))?; }
+                OP_I32_SUB  => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_sub(b))?; }
+                OP_I32_MUL  => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_mul(b))?; }
+                OP_I32_AND  => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a & b)?; }
+                OP_I32_OR   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a | b)?; }
+                OP_I32_XOR  => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a ^ b)?; }
+                OP_I32_SHL  => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_shl(b as u32 & 31))?; }
+                OP_I32_SHR_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_shr(b as u32 & 31))?; }
 
                 other => return Err(InterpError::UnknownOpcode(other)),
             }
