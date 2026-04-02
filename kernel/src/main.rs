@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
 
+mod drivers;
+mod keyboard;
+mod shell;
 mod vga;
 
 use bootloader_api::{entry_point, BootInfo};
@@ -41,16 +44,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         vga::init(buf, info);
     }
 
-    println!("Hello World");
-    println!("Sprint 1.3: print! and println! working");
-
-    loop {}
+    println!("Type 'help' for commands.");
+    keyboard::run_loop();
 }
 
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    // Best-effort: print panic info if the writer is up.
-    // The `_` suppresses "unused variable" if the print fails silently.
-    let _ = info;
+fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }

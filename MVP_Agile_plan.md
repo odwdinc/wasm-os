@@ -66,9 +66,9 @@ Hello World
 
 ### 4. Keyboard Input
 
-* [ ] Handle PS/2 keyboard interrupts
-* [ ] Decode scancodes → characters
-* [ ] Print typed characters
+* [x] Handle PS/2 keyboard interrupts
+* [x] Decode scancodes → characters
+* [x] Print typed characters
 
 ✅ Output:
 
@@ -81,14 +81,14 @@ hello
 
 ### 5. Terminal Loop (Shell v0)
 
-* [ ] Input buffer (string)
-* [ ] Enter key handling
-* [ ] Basic command parsing
+* [x] Input buffer (string)
+* [x] Enter key handling
+* [x] Basic command parsing
 
 Commands:
 
-* [ ] `help`
-* [ ] `echo`
+* [x] `help`
+* [x] `echo`
 
 ---
 

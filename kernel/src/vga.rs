@@ -193,6 +193,21 @@ impl VgaBuffer {
         if c == '\n' {
             self.col = 0;
             self.row += 1;
+        } else if c == '\x08' {
+            // Backspace: move cursor left one position and erase the glyph.
+            if self.col > 0 {
+                self.col -= 1;
+            } else if self.row > 0 {
+                self.row -= 1;
+                self.col = self.cols() - 1;
+            }
+            let px = self.col * CHAR_W;
+            let py = self.row * CHAR_H;
+            for row_i in 0..CHAR_H {
+                for col_i in 0..CHAR_W {
+                    self.put_pixel(px + col_i, py + row_i, 0, 0, 0);
+                }
+            }
         } else {
             let code = c as usize;
             let glyph = if (32..=126).contains(&code) {
