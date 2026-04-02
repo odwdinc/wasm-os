@@ -1,0 +1,9 @@
+[workspace]
+members = ["kernel", "runtime", "shell", "fs", "shared"]
+resolver = "2"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

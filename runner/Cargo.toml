@@ -1,0 +1,11 @@
+[package]
+name = "runner"
+version = "0.1.0"
+edition = "2021"
+
+# Isolated from the parent bare-metal workspace so this crate
+# builds with std on the host, not targeting x86_64-unknown-none.
+[workspace]
+
+[dependencies]
+bootloader = { version = "0.11", features = ["bios"] }
