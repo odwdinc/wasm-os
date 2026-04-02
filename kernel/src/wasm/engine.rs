@@ -181,9 +181,9 @@ pub fn run(bytes: &[u8], func_idx: usize) -> Result<Option<i32>, RunError> {
     Ok(interp.top_i32())
 }
 
-// ── Embedded test module (Sprint 2.5) ────────────────────────────────────────
+// ── Embedded test modules ─────────────────────────────────────────────────────
 //
-// WAT equivalent:
+// HELLO_WASM — WAT equivalent:
 //   (module
 //     (import "env" "print" (func (param i32 i32)))   ;; func 0 (import)
 //     (memory 1)
@@ -192,6 +192,7 @@ pub fn run(bytes: &[u8], func_idx: usize) -> Result<Option<i32>, RunError> {
 //       i32.const 0   ;; ptr
 //       i32.const 17  ;; len
 //       call 0)       ;; call print
+//     (export "main" (func 1))
 //   )
 //
 // To run: engine::run(HELLO_WASM, 1)
@@ -221,6 +222,12 @@ pub const HELLO_WASM: &[u8] = &[
     0x05, 0x03,
     0x01, 0x00, 0x01,
 
+    // ── export section (id=7, size=8) — "main" → func 1 ─────────────────────
+    0x07, 0x08,
+    0x01,                          // 1 export
+    0x04, 0x6D, 0x61, 0x69, 0x6E, // "main"
+    0x00, 0x01,                    // kind=func, index=1
+
     // ── code section (id=10, size=10) ────────────────────────────────────────
     // body: 0 locals | i32.const 0 | i32.const 17 | call 0 | end
     0x0A, 0x0A,
@@ -242,4 +249,72 @@ pub const HELLO_WASM: &[u8] = &[
     0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x20,  // "Hello "
     0x66, 0x72, 0x6F, 0x6D, 0x20,        // "from "
     0x57, 0x41, 0x53, 0x4D, 0x21, 0x0A,  // "WASM!\n"
+];
+
+// GREET_WASM — WAT equivalent:
+//   (module
+//     (import "env" "print" (func (param i32 i32)))   ;; func 0 (import)
+//     (memory 1)
+//     (data (i32.const 0) "Greetings from the second module!\n")  ;; 34 bytes
+//     (func                                             ;; func 1 (defined)
+//       i32.const 0   ;; ptr
+//       i32.const 34  ;; len
+//       call 0)       ;; call print
+//     (export "main" (func 1))
+//   )
+pub const GREET_WASM: &[u8] = &[
+    // ── header ──────────────────────────────────────────────────────────────
+    0x00, 0x61, 0x73, 0x6D,  // magic "\0asm"
+    0x01, 0x00, 0x00, 0x00,  // version 1
+
+    // ── type section (id=1, size=9) — 2 types ───────────────────────────────
+    0x01, 0x09,
+    0x02,
+    0x60, 0x02, 0x7F, 0x7F, 0x00, // type 0: (i32 i32) -> ()
+    0x60, 0x00, 0x00,              // type 1: ()       -> ()
+
+    // ── import section (id=2, size=13) ───────────────────────────────────────
+    0x02, 0x0D,
+    0x01,
+    0x03, 0x65, 0x6E, 0x76,                      // "env"
+    0x05, 0x70, 0x72, 0x69, 0x6E, 0x74,          // "print"
+    0x00, 0x00,
+
+    // ── function section (id=3, size=2) ──────────────────────────────────────
+    0x03, 0x02,
+    0x01, 0x01,
+
+    // ── memory section (id=5, size=3) ────────────────────────────────────────
+    0x05, 0x03,
+    0x01, 0x00, 0x01,
+
+    // ── export section (id=7, size=8) — "main" → func 1 ─────────────────────
+    0x07, 0x08,
+    0x01,
+    0x04, 0x6D, 0x61, 0x69, 0x6E, // "main"
+    0x00, 0x01,
+
+    // ── code section (id=10, size=10) ────────────────────────────────────────
+    // 0 locals | i32.const 0 | i32.const 34 | call 0 | end
+    0x0A, 0x0A,
+    0x01,        // 1 body
+    0x08,        // body size = 8
+    0x00,        // 0 local groups
+    0x41, 0x00,  // i32.const 0   (ptr)
+    0x41, 0x22,  // i32.const 34  (len)  — 34 = 0x22
+    0x10, 0x00,  // call 0        (print)
+    0x0B,        // end
+
+    // ── data section (id=11, size=40) ────────────────────────────────────────
+    // active segment, mem 0, offset 0, "Greetings from the second module!\n"
+    0x0B, 0x28,
+    0x01,              // 1 segment
+    0x00,              // kind = active mem-0
+    0x41, 0x00, 0x0B,  // offset: i32.const 0; end
+    0x22,              // 34 bytes
+    0x47, 0x72, 0x65, 0x65, 0x74, 0x69, 0x6E, 0x67, 0x73, 0x20,  // "Greetings "
+    0x66, 0x72, 0x6F, 0x6D, 0x20,                                  // "from "
+    0x74, 0x68, 0x65, 0x20,                                        // "the "
+    0x73, 0x65, 0x63, 0x6F, 0x6E, 0x64, 0x20,                    // "second "
+    0x6D, 0x6F, 0x64, 0x75, 0x6C, 0x65, 0x21, 0x0A,              // "module!\n"
 ];

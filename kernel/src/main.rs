@@ -2,6 +2,7 @@
 #![no_main]
 
 mod drivers;
+mod fs;
 mod keyboard;
 mod shell;
 mod vga;
@@ -44,6 +45,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let buf = fb.buffer_mut();
         vga::init(buf, info);
     }
+
+    // Sprint 3.1: register embedded modules into the in-memory FS.
+    fs::register_file("hello.wasm", wasm::engine::HELLO_WASM);
+    fs::register_file("greet.wasm", wasm::engine::GREET_WASM);
 
     // Sprint 2.5: auto-run the embedded WASM module on boot.
     if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, 1) {
