@@ -211,10 +211,10 @@ Run named `.wasm` files from a terminal command with entry-point discovery.
 
 ### 4. Error Handling
 
-* [ ] File not found
-* [ ] Export/entry not found
-* [ ] Invalid WASM (propagate `LoadError`)
-* [ ] Runtime errors (propagate `InterpError`)
+* [x] File not found
+* [x] Export/entry not found
+* [x] Invalid WASM (propagate `LoadError`)
+* [x] Runtime errors (propagate `InterpError`)
 
 ---
 
