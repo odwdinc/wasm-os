@@ -5,8 +5,10 @@ By the end:
 * Boots in QEMU
 * Shows a terminal prompt
 * Accepts keyboard input
-* Can load and execute a `.wasm` file
-* Prints output from the WASM program
+* `ls` shows registered `.wasm` files
+* `run <file>` loads a module, discovers its entry point by export name, and executes it
+* Prints output from the WASM program via host `print` function
+* Runtime handles real WASM output from `wat2wasm` (locals, arithmetic, control flow)
 
 ---
 
@@ -173,7 +175,7 @@ Hello from WASM!
 
 ## 🎯 Goal
 
-Run external `.wasm` files via terminal.
+Run named `.wasm` files from a terminal command with entry-point discovery.
 
 ---
 
@@ -181,39 +183,38 @@ Run external `.wasm` files via terminal.
 
 ### 1. In-Memory File System
 
-* [ ] File struct (`name`, `data`)
-* [ ] File table (array or hashmap)
-* [ ] `read_file(name)`
+* [ ] `File` struct (`name: &str`, `data: &[u8]`)
+* [ ] Fixed-size file table (`[Option<File>; MAX_FILES]`)
+* [ ] `register_file(name, data)` and `find_file(name)`
+* [ ] Pre-register `HELLO_WASM` as `”hello.wasm”` and a second module as `”greet.wasm”` at boot
 
 ---
 
-### 2. File Commands
+### 2. Export Section Parsing
 
-* [ ] `ls`
-* [ ] `cat file.wasm`
-
----
-
-### 3. WASM Loader from FS
-
-* [ ] Replace hardcoded module
-* [ ] Load from file system
+* [ ] Parse export section in `loader.rs` (already captured, needs iterator)
+* [ ] `find_export(module, name) -> Option<u32>` — returns func index by name
+* [ ] Change `engine::run(bytes, func_idx)` → `engine::run(bytes, entry: &str)` using export lookup
+* [ ] Fallback: if no export named `entry`, return `RunError::EntryNotFound`
 
 ---
 
-### 4. `run` Command
+### 3. Shell Commands
 
-* [ ] `run hello.wasm`
-* [ ] Execute module
-* [ ] Capture output
+* [ ] `ls` — list all registered files
+* [ ] `info <name>` — show section counts, func count, import count (replaces `cat`)
+* [ ] `run <name>` — look up file, parse exports, execute entry `”main”`
+* [ ] `clear` — clear the terminal screen
+* [ ] Remove old `wasm` test command
 
 ---
 
-### 5. Error Handling
+### 4. Error Handling
 
 * [ ] File not found
-* [ ] Invalid WASM
-* [ ] Runtime errors
+* [ ] Export/entry not found
+* [ ] Invalid WASM (propagate `LoadError`)
+* [ ] Runtime errors (propagate `InterpError`)
 
 ---
 
@@ -222,70 +223,97 @@ Run external `.wasm` files via terminal.
 ```
 > ls
 hello.wasm
+greet.wasm
 
 > run hello.wasm
 Hello from WASM!
+
+> run greet.wasm
+Greetings from the second module!
 >
 ```
 
 ---
 
-# 🔴 Optional Sprint 4 (Days 16–20): Editing + Compile
-
-*(Stretch goal, not required for MVP)*
-
----
+# 🔴 Sprint 4 (Days 16–20): Core Opcode Coverage
 
 ## 🎯 Goal
 
-Basic code editing + simple compile step.
+Expand the interpreter enough to run WASM produced by a real assembler (`wat2wasm`),
+not just hand-assembled bytes. This is what makes the runtime generally useful.
 
 ---
 
 ## 🧩 Tasks
 
-### 1. Text Editor (Minimal)
+### 1. Local Variables
 
-* [ ] `edit file.wat`
-* [ ] Append text
-* [ ] Save file
-
----
-
-### 2. WAT Support (Optional)
-
-* [ ] Store `.wat` files
-* [ ] Stub “compiler”
+* [ ] `local.get <idx>`
+* [ ] `local.set <idx>`
+* [ ] `local.tee <idx>`
+* [ ] Allocate locals per frame (extend `Frame` with a locals array)
 
 ---
 
-### 3. Fake Compile Step (Shortcut)
+### 2. Arithmetic & Comparison (i32)
 
-* [ ] `build file.wat`
-* just maps → precompiled `.wasm`
-
-👉 Keeps momentum without building a compiler
+* [ ] `i32.add`, `i32.sub`, `i32.mul`
+* [ ] `i32.and`, `i32.or`, `i32.xor`, `i32.shl`, `i32.shr_s`
+* [ ] `i32.eq`, `i32.ne`, `i32.lt_s`, `i32.gt_s`, `i32.le_s`, `i32.ge_s`
+* [ ] `i32.eqz`
 
 ---
 
-## ✅ Done When:
+### 3. Memory Operations
+
+* [ ] `i32.load` (4-byte load from linear memory)
+* [ ] `i32.store` (4-byte store)
+* [ ] `i32.load8_u`, `i32.store8`
+* [ ] Bounds-check all memory accesses → `InterpError::MemOutOfBounds`
+
+---
+
+### 4. Control Flow
+
+* [ ] `if / else / end`
+* [ ] `block / end` with `br` (branch-to-end)
+* [ ] `loop / end` with `br` (branch-to-top)
+* [ ] `br_if`
+* [ ] `return`
+* [ ] `drop`, `select`
+* [ ] `nop`, `unreachable`
+
+---
+
+### 5. Validation
+
+* [ ] Reject unknown section IDs gracefully (skip with logged warning)
+* [ ] Enforce stack underflow detection on all pop operations
+
+---
+
+## ✅ Sprint 4 Done When:
+
+A module compiled with `wat2wasm` that uses locals, arithmetic, and a loop runs correctly:
 
 ```
-> edit hello.wat
-> build hello.wat
-> run hello.wasm
+> run fib.wasm
+fib(10) = 55
 ```
-
 ---
 
 # 🧱 Backlog (Post-MVP)
 
-* Real WASM spec support
-* Memory isolation per module
+* i64 / f32 / f64 type support
+* Multi-value returns
+* Table section + `call_indirect`
+* Memory isolation per module (separate `mem` per instance)
+* Multiple WASM instances running concurrently
 * Preemptive scheduling
 * Disk-backed filesystem
-* Networking
+* Networking stack
 * JIT compilation
+* WAT parser (true in-OS assembler)
 
 ---
 
@@ -320,21 +348,5 @@ Never break:
 * terminal
 
 Everything else is incremental.
-
----
-
-# 🧭 Critical Path (Shortest Route to Success)
-
-If you want to *compress to 1–2 weeks*, focus ONLY on:
-
-1. Boot + terminal
-2. Hardcoded WASM execution
-3. `run` command
-
-Skip:
-
-* editor
-* compiler
-* real filesystem
 
 ---
