@@ -144,8 +144,8 @@ Start tiny—support only:
 
 Design interface:
 
-* [ ] `print(ptr, len)`
-* [ ] Wire into terminal output
+* [x] `print(ptr, len)`
+* [x] Wire into terminal output
 
 ---
 
@@ -153,8 +153,8 @@ Design interface:
 
 Example:
 
-* Precompile a WASM module that prints text
-* Embed bytes in kernel
+* [x] Precompile a WASM module that prints text
+* [x] Embed bytes in kernel
 
 ---
 

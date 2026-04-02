@@ -50,6 +50,7 @@ pub struct Module<'a> {
     pub function_section: Option<&'a [u8]>,
     pub export_section:   Option<&'a [u8]>,
     pub code_section:     Option<&'a [u8]>,
+    pub data_section:     Option<&'a [u8]>,
 }
 
 // ── LEB-128 helper ───────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ pub fn load(bytes: &[u8]) -> Result<Module, LoadError> {
         function_section: None,
         export_section:   None,
         code_section:     None,
+        data_section:     None,
     };
 
     // ── 2. Section loop ──
@@ -118,6 +120,7 @@ pub fn load(bytes: &[u8]) -> Result<Module, LoadError> {
             SECTION_FUNCTION => module.function_section = Some(data),
             SECTION_EXPORT   => module.export_section   = Some(data),
             SECTION_CODE     => module.code_section     = Some(data),
+            SECTION_DATA     => module.data_section     = Some(data),
             _                => {} // custom / table / memory / etc. — skip
         }
     }

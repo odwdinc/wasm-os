@@ -15,9 +15,16 @@ const OP_CALL:      u8 = 0x10;
 const OP_I32_CONST: u8 = 0x41;
 
 // ── Capacity limits ───────────────────────────────────────────────────────────
-pub const MAX_FUNCS:   usize = 32;  // max WASM-defined functions per module
-pub const STACK_DEPTH: usize = 256; // value stack slots
-pub const CALL_DEPTH:  usize = 32;  // max call nesting depth
+pub const MAX_FUNCS:   usize = 32;   // max WASM-defined functions per module
+pub const STACK_DEPTH: usize = 256;  // value stack slots
+pub const CALL_DEPTH:  usize = 32;   // max call nesting depth
+pub const MEM_SIZE:    usize = 4096; // linear memory bytes
+
+/// Host dispatch function: called when WASM executes `call N` where N < import_count.
+/// The host is responsible for popping its arguments from vstack/vsp and
+/// pushing any return values.
+pub type HostFn = fn(func_idx: usize, vstack: &mut [i32], vsp: &mut usize, mem: &mut [u8])
+    -> Result<(), InterpError>;
 
 // ── Error type ───────────────────────────────────────────────────────────────
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -56,6 +63,11 @@ struct Frame {
     pc: usize,       // byte offset within that body slice
 }
 
+// ── Default host (no-op, returns IsImport) ───────────────────────────────────
+fn default_host(_: usize, _: &mut [i32], _: &mut usize, _: &mut [u8]) -> Result<(), InterpError> {
+    Err(InterpError::IsImport)
+}
+
 // ── Interpreter ───────────────────────────────────────────────────────────────
 pub struct Interpreter<'a> {
     /// Bytecode slices for each non-import function.
@@ -66,12 +78,18 @@ pub struct Interpreter<'a> {
     pub import_count: usize,
 
     // Value stack — i32 only for now.
-    vstack: [i32; STACK_DEPTH],
-    vsp: usize,
+    pub vstack: [i32; STACK_DEPTH],
+    pub vsp: usize,
 
     // Call stack.
     frames: [Frame; CALL_DEPTH],
     fdepth: usize,
+
+    /// Linear memory — one flat byte array shared with host functions.
+    pub mem: [u8; MEM_SIZE],
+
+    /// Host dispatch: called when a `call N` targets an import (N < import_count).
+    pub host_fn: HostFn,
 }
 
 impl<'a> Interpreter<'a> {
@@ -92,6 +110,8 @@ impl<'a> Interpreter<'a> {
             vsp: 0,
             frames: [Frame { body_idx: 0, pc: 0 }; CALL_DEPTH],
             fdepth: 0,
+            mem: [0u8; MEM_SIZE],
+            host_fn: default_host,
         })
     }
 
@@ -133,8 +153,7 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn v_pop(&mut self) -> Result<i32, InterpError> {
+    pub fn v_pop(&mut self) -> Result<i32, InterpError> {
         if self.vsp == 0 {
             return Err(InterpError::StackUnderflow);
         }
@@ -189,14 +208,16 @@ impl<'a> Interpreter<'a> {
 
                     let callee = callee as usize;
                     if callee < self.import_count {
-                        // Host function — dispatched by the caller layer (Sprint 2.4).
-                        return Err(InterpError::IsImport);
+                        // Host function dispatch.
+                        let host = self.host_fn; // copy fn ptr (Copy) before mut borrow
+                        host(callee, &mut self.vstack, &mut self.vsp, &mut self.mem)?;
+                    } else {
+                        let body_idx = callee - self.import_count;
+                        if body_idx >= self.body_count {
+                            return Err(InterpError::FuncIndexOutOfRange);
+                        }
+                        self.push_frame(body_idx)?;
                     }
-                    let body_idx = callee - self.import_count;
-                    if body_idx >= self.body_count {
-                        return Err(InterpError::FuncIndexOutOfRange);
-                    }
-                    self.push_frame(body_idx)?;
                 }
 
                 other => return Err(InterpError::UnknownOpcode(other)),
@@ -258,7 +279,7 @@ fn parse_code_section<'a>(
 
 /// Decode a signed 32-bit LEB-128 integer.
 /// Returns `(value, bytes_consumed)` or `None` on malformed input.
-fn read_i32_leb128(bytes: &[u8]) -> Option<(i32, usize)> {
+pub fn read_i32_leb128(bytes: &[u8]) -> Option<(i32, usize)> {
     let mut result: i32 = 0;
     let mut shift: u32  = 0;
     for (i, &byte) in bytes.iter().enumerate() {

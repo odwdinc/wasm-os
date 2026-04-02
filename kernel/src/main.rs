@@ -45,6 +45,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         vga::init(buf, info);
     }
 
+    // Sprint 2.5: auto-run the embedded WASM module on boot.
+    if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, 1) {
+        println!("wasm boot error: {}", e.as_str());
+    }
+
     println!("Type 'help' for commands.");
     keyboard::run_loop();
 }

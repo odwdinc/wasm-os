@@ -143,29 +143,8 @@ fn cmd_history() {
 }
 
 fn cmd_wasm() {
-    // Minimal WASM module (no imports):
-    //   (module (func (result i32) (i32.const 42)))
-    //
-    // Byte layout:
-    //   magic + version      00 61 73 6D  01 00 00 00
-    //   type section   (id=1, size=5):  01 60 00 01 7F
-    //   func section   (id=3, size=2):  01 00
-    //   code section   (id=10,size=6):  01 04 00 41 2A 0B
-    static TEST_WASM: &[u8] = &[
-        // header
-        0x00, 0x61, 0x73, 0x6D,
-        0x01, 0x00, 0x00, 0x00,
-        // type section: () -> i32
-        0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7F,
-        // function section: func 0 uses type 0
-        0x03, 0x02, 0x01, 0x00,
-        // code section: i32.const 42; end
-        0x0A, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2A, 0x0B,
-    ];
-
-    match crate::wasm::engine::run(TEST_WASM, 0) {
-        Ok(Some(v)) => { crate::println!("WASM result: {}", v); }
-        Ok(None)    => { crate::println!("WASM: ok (no return value)"); }
-        Err(e)      => { crate::println!("WASM error: {}", e.as_str()); }
+    match crate::wasm::engine::run(crate::wasm::engine::HELLO_WASM, 1) {
+        Ok(_)  => {}
+        Err(e) => { crate::println!("WASM error: {}", e.as_str()); }
     }
 }
