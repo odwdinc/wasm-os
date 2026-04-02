@@ -1,5 +1,3 @@
----
-
 # 🚀 MVP Goal (Definition of Done)
 
 By the end:
