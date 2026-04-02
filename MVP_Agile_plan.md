@@ -126,9 +126,9 @@ Load and execute a minimal WebAssembly module.
 
 Start tiny—support only:
 
-* [ ] `i32.const`
-* [ ] `call`
-* [ ] `end`
+* [x] `i32.const`
+* [x] `call`
+* [x] `end`
 
 ---
 
