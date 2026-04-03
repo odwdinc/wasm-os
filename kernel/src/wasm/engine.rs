@@ -1,15 +1,18 @@
-//! Execution engine — Sprint B.3: Instance Pool
+//! Execution engine — Sprint B.4: Host Function Registry
 //!
 //! Public API:
-//!   `spawn(name, bytes)`            — instantiate into a pool slot, return handle
-//!   `call_handle(handle, entry, args)` — execute an exported function
-//!   `destroy(handle)`               — free the pool slot, zero its memory
-//!   `for_each_instance(f)`          — iterate active slots (for `ps`)
-//!   `run(bytes, entry, args)`       — convenience: spawn + call + destroy
+//!   `register_host(module, name, fn)` — register a named host function at boot
+//!   `init_host_fns()`                 — register the kernel's built-in host functions
+//!   `spawn(name, bytes)`              — instantiate into a pool slot, return handle
+//!   `call_handle(handle, entry, args)`— execute an exported function
+//!   `destroy(handle)`                 — free the pool slot, zero its memory
+//!   `for_each_instance(f)`            — iterate active slots (for `ps`)
+//!   `run(bytes, entry, args)`         — convenience: spawn + call + destroy
 
 use core::mem::MaybeUninit;
-use super::loader::{load, find_export, read_memory_min_pages, LoadError, read_u32_leb128};
-use super::interp::{Interpreter, InterpError, HostFn, STACK_DEPTH, read_i32_leb128};
+use super::loader::{load, find_export, read_memory_min_pages, for_each_func_import,
+                    LoadError, read_u32_leb128};
+use super::interp::{Interpreter, InterpError, HostFn, MAX_FUNCS, STACK_DEPTH, read_i32_leb128};
 
 // ── Capacity limits ───────────────────────────────────────────────────────────
 
@@ -27,6 +30,46 @@ const PAGE_SIZE: usize = 65536;
 static mut SLOT_MEM: [[u8; MAX_MEM_PAGES as usize * PAGE_SIZE]; MAX_INSTANCES] =
     [[0u8; MAX_MEM_PAGES as usize * PAGE_SIZE]; MAX_INSTANCES];
 
+// ── Host function registry ────────────────────────────────────────────────────
+
+/// Maximum number of host functions that can be registered.
+pub const MAX_HOST_FUNCS: usize = 16;
+
+#[derive(Clone, Copy)]
+struct HostEntry {
+    module: &'static str,
+    name:   &'static str,
+    func:   HostFn,
+}
+
+const EMPTY_ENTRY: Option<HostEntry> = None;
+static mut HOST_REGISTRY: [Option<HostEntry>; MAX_HOST_FUNCS] = [EMPTY_ENTRY; MAX_HOST_FUNCS];
+static mut HOST_COUNT:    usize = 0;
+
+/// Register a named host function.  Called at boot before any module is run.
+/// Silently ignores registration if the registry is full.
+pub fn register_host(module: &'static str, name: &'static str, func: HostFn) {
+    unsafe {
+        if HOST_COUNT < MAX_HOST_FUNCS {
+            HOST_REGISTRY[HOST_COUNT] = Some(HostEntry { module, name, func });
+            HOST_COUNT += 1;
+        }
+    }
+}
+
+fn lookup_host(module: &str, name: &str) -> Option<HostFn> {
+    unsafe {
+        for i in 0..HOST_COUNT {
+            if let Some(e) = HOST_REGISTRY[i] {
+                if e.module == module && e.name == name {
+                    return Some(e.func);
+                }
+            }
+        }
+    }
+    None
+}
+
 // ── Error type ────────────────────────────────────────────────────────────────
 
 pub enum RunError {
@@ -35,6 +78,7 @@ pub enum RunError {
     EntryNotFound,
     MemoryTooLarge,
     PoolFull,
+    ImportNotFound,
 }
 
 impl RunError {
@@ -45,42 +89,40 @@ impl RunError {
             RunError::EntryNotFound  => "entry point not found in exports",
             RunError::MemoryTooLarge => "module requests more memory than the kernel allows",
             RunError::PoolFull       => "instance pool is full",
+            RunError::ImportNotFound => "module imports an unregistered host function",
         }
     }
 }
 
-// ── Host functions ────────────────────────────────────────────────────────────
+// ── Built-in host functions ───────────────────────────────────────────────────
 
-/// Kernel host dispatch.
-///   index 0 — `print(ptr: i32, len: i32)`  write UTF-8 from linear memory
-///   index 1 — `print_int(n: i32)`           print decimal integer + newline
-fn kernel_host(
-    func_idx: usize,
-    vstack:   &mut [i64],
-    vsp:      &mut usize,
-    mem:      &mut [u8],
-) -> Result<(), InterpError> {
-    match func_idx {
-        0 => {
-            if *vsp < 2 { return Err(InterpError::StackUnderflow); }
-            let len = vstack[*vsp - 1] as usize;
-            let ptr = vstack[*vsp - 2] as usize;
-            *vsp -= 2;
-            let end = ptr.saturating_add(len).min(mem.len());
-            if let Ok(s) = core::str::from_utf8(&mem[ptr..end]) {
-                crate::print!("{}", s);
-            }
-            Ok(())
-        }
-        1 => {
-            if *vsp < 1 { return Err(InterpError::StackUnderflow); }
-            let n = vstack[*vsp - 1] as i32;
-            *vsp -= 1;
-            fmt_i32(n);
-            Ok(())
-        }
-        _ => Err(InterpError::IsImport),
+/// `print(ptr: i32, len: i32)` — write UTF-8 bytes from linear memory.
+fn host_print(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 2 { return Err(InterpError::StackUnderflow); }
+    let len = vstack[*vsp - 1] as usize;
+    let ptr = vstack[*vsp - 2] as usize;
+    *vsp -= 2;
+    let end = ptr.saturating_add(len).min(mem.len());
+    if let Ok(s) = core::str::from_utf8(&mem[ptr..end]) {
+        crate::print!("{}", s);
     }
+    Ok(())
+}
+
+/// `print_int(n: i32)` — print a decimal integer followed by a newline.
+fn host_print_int(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let n = vstack[*vsp - 1] as i32;
+    *vsp -= 1;
+    fmt_i32(n);
+    Ok(())
+}
+
+/// Register the kernel's built-in host functions.  Call once at boot before
+/// running any module.
+pub fn init_host_fns() {
+    register_host("env", "print",     host_print);
+    register_host("env", "print_int", host_print_int);
 }
 
 /// Print an i32 as decimal followed by a newline, without heap allocation.
@@ -282,9 +324,24 @@ pub fn spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     };
 
     let import_count = count_func_imports(module.import_section);
-    let mut interp = Interpreter::new(&module, import_count, mem)
+
+    // Resolve each function import against the host registry.
+    let mut host_fns: [Option<HostFn>; MAX_FUNCS] = [None; MAX_FUNCS];
+    let mut idx = 0usize;
+    let mut missing = false;
+    if let Some(sec) = module.import_section {
+        for_each_func_import(sec, &mut |module_name, func_name| {
+            if idx < MAX_FUNCS {
+                host_fns[idx] = lookup_host(module_name, func_name);
+                if host_fns[idx].is_none() { missing = true; }
+                idx += 1;
+            }
+        });
+    }
+    if missing { return Err(RunError::ImportNotFound); }
+
+    let mut interp = Interpreter::new(&module, import_count, mem, host_fns)
         .map_err(RunError::Interp)?;
-    interp.host_fn = kernel_host;
 
     if let Some(data) = module.data_section {
         if !init_memory(data, &mut interp.mem) {
@@ -358,3 +415,4 @@ pub const HELLO_WASM:  &[u8] = include_bytes!("../../../userland/hello/hello.was
 pub const GREET_WASM:  &[u8] = include_bytes!("../../../userland/greet/greet.wasm");
 pub const FIB_WASM:    &[u8] = include_bytes!("../../../userland/fib/fib.wasm");
 pub const PRIMES_WASM: &[u8] = include_bytes!("../../../userland/primes/primes.wasm");
+pub const COLLATZ_WASM: &[u8] = include_bytes!("../../../userland/collatz/collatz.wasm");

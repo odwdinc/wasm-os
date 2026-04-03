@@ -150,10 +150,10 @@ Each `run` call gets a clean, isolated instance.
 
 ### 4. Host Function Registry
 
-* [ ] Replace single `host_fn` pointer with a small dispatch table
-* [ ] `register_host(module, name, fn_ptr)` at boot
-* [ ] Instances resolve imports against registry at instantiation time
-* [ ] `ImportNotFound` error if module requests an unregistered host function
+* [x] Replace single `host_fn` pointer with a small dispatch table
+* [x] `register_host(module, name, fn_ptr)` at boot
+* [x] Instances resolve imports against registry at instantiation time
+* [x] `ImportNotFound` error if module requests an unregistered host function
 
 ---
 

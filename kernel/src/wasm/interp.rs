@@ -108,9 +108,10 @@ const PAGE_SIZE: usize = 65536;
 
 const NO_ELSE: usize = usize::MAX;
 
-/// Host dispatch: called for `call N` where N < import_count.
-/// The value stack holds i64 (i32 values are sign-extended).
-pub type HostFn = fn(func_idx: usize, vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8])
+/// A single resolved host function.  Called when executing `call N` where
+/// `N < import_count`.  Each import is pre-resolved at instantiation time so
+/// there is no dispatch overhead at runtime.
+pub type HostFn = fn(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8])
     -> Result<(), InterpError>;
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -129,7 +130,7 @@ pub enum InterpError {
     GlobalImmutable,
     IndirectCallNull,
     IndirectCallTypeMismatch,
-    IsImport,
+    ImportNotFound,
     Unreachable,
     StackOverflow,
     StackUnderflow,
@@ -155,7 +156,7 @@ impl InterpError {
             Self::GlobalImmutable          => "write to immutable global",
             Self::IndirectCallNull         => "call_indirect: null table entry",
             Self::IndirectCallTypeMismatch => "call_indirect: type mismatch",
-            Self::IsImport              => "call to import (not yet supported)",
+            Self::ImportNotFound        => "call to unresolved import",
             Self::Unreachable           => "unreachable executed",
             Self::StackOverflow         => "value stack overflow",
             Self::StackUnderflow        => "value stack underflow",
@@ -207,9 +208,6 @@ const BLANK_FRAME: Frame = Frame {
 };
 
 // ── Default host ──────────────────────────────────────────────────────────────
-fn default_host(_: usize, _: &mut [i64], _: &mut usize, _: &mut [u8]) -> Result<(), InterpError> {
-    Err(InterpError::IsImport)
-}
 
 // ── Interpreter ───────────────────────────────────────────────────────────────
 pub struct Interpreter<'a> {
@@ -242,12 +240,12 @@ pub struct Interpreter<'a> {
     global_mutable:  [bool; MAX_GLOBALS],
     global_count:    usize,
 
-    pub mem:     &'a mut [u8],
-    pub host_fn: HostFn,
+    pub mem:      &'a mut [u8],
+    pub host_fns: [Option<HostFn>; MAX_FUNCS],
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(module: &Module<'a>, import_count: usize, mem: &'a mut [u8]) -> Result<Self, InterpError> {
+    pub fn new(module: &Module<'a>, import_count: usize, mem: &'a mut [u8], host_fns: [Option<HostFn>; MAX_FUNCS]) -> Result<Self, InterpError> {
         let mut type_param_counts  = [0usize; MAX_TYPES];
         let mut type_result_counts = [0usize; MAX_TYPES];
         let type_count = if let Some(tb) = module.type_section {
@@ -299,12 +297,12 @@ impl<'a> Interpreter<'a> {
             globals, global_mutable, global_count,
 
             mem,
-            host_fn: default_host,
+            host_fns,
         })
     }
 
     pub fn call(&mut self, func_idx: usize) -> Result<(), InterpError> {
-        if func_idx < self.import_count { return Err(InterpError::IsImport); }
+        if func_idx < self.import_count { return Err(InterpError::ImportNotFound); }
         let body_idx = func_idx - self.import_count;
         if body_idx >= self.body_count { return Err(InterpError::FuncIndexOutOfRange); }
         self.push_frame(body_idx)?;
@@ -819,8 +817,8 @@ impl<'a> Interpreter<'a> {
                     self.frames[fi].pc += consumed;
                     let callee = callee as usize;
                     if callee < self.import_count {
-                        let host = self.host_fn;
-                        host(callee, &mut self.vstack, &mut self.vsp, &mut *self.mem)?;
+                        let host = self.host_fns[callee].ok_or(InterpError::ImportNotFound)?;
+                        host(&mut self.vstack, &mut self.vsp, &mut *self.mem)?;
                     } else {
                         let body_idx = callee - self.import_count;
                         if body_idx >= self.body_count { return Err(InterpError::FuncIndexOutOfRange); }
@@ -852,8 +850,8 @@ impl<'a> Interpreter<'a> {
                     }
 
                     if callee < self.import_count {
-                        let host = self.host_fn;
-                        host(callee, &mut self.vstack, &mut self.vsp, &mut *self.mem)?;
+                        let host = self.host_fns[callee].ok_or(InterpError::ImportNotFound)?;
+                        host(&mut self.vstack, &mut self.vsp, &mut *self.mem)?;
                     } else {
                         let body_idx = callee - self.import_count;
                         if body_idx >= self.body_count { return Err(InterpError::FuncIndexOutOfRange); }

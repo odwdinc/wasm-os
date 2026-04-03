@@ -1,6 +1,6 @@
 (module
   ;; Import the host print function: print(ptr: i32, len: i32)
-  (import "os" "print" (func $print (param i32 i32)))
+  (import "env" "print" (func $print (param i32 i32)))
 
   (memory 1)
 

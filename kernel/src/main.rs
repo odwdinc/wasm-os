@@ -48,6 +48,7 @@ macro_rules! println {
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     drivers::serial::init();
+    wasm::engine::init_host_fns();
 
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         let info = fb.info();
@@ -59,6 +60,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     fs::register_file("greet.wasm",  wasm::engine::GREET_WASM);
     fs::register_file("fib.wasm",    wasm::engine::FIB_WASM);
     fs::register_file("primes.wasm", wasm::engine::PRIMES_WASM);
+    fs::register_file("collatz.wasm", wasm::engine::COLLATZ_WASM);
 
     if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, "main", &[]) {
         println!("wasm boot error: {}", e.as_str());

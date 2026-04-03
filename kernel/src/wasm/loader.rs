@@ -110,6 +110,56 @@ pub fn find_export(module: &Module, name: &str) -> Option<u32> {
     None
 }
 
+// ── Import section iterator ───────────────────────────────────────────────────
+
+/// Call `f(module, name)` for every **function** import in the section, in
+/// declaration order.  Non-function imports (table, memory, global) are skipped.
+/// Silently stops on any parse error.
+pub fn for_each_func_import<F: FnMut(&str, &str)>(section: &[u8], f: &mut F) {
+    fn inner<F: FnMut(&str, &str)>(section: &[u8], f: &mut F) -> Option<()> {
+        let mut cur = 0usize;
+        let (count, n) = read_u32_leb128(section)?;
+        cur += n;
+
+        for _ in 0..count as usize {
+            // Module name
+            let (ml, n) = read_u32_leb128(&section[cur..])?; cur += n;
+            let mod_name = core::str::from_utf8(section.get(cur..cur + ml as usize)?).ok()?;
+            cur += ml as usize;
+
+            // Field name
+            let (nl, n) = read_u32_leb128(&section[cur..])?; cur += n;
+            let func_name = core::str::from_utf8(section.get(cur..cur + nl as usize)?).ok()?;
+            cur += nl as usize;
+
+            // Kind byte
+            let kind = *section.get(cur)?; cur += 1;
+
+            match kind {
+                0 => { // function: type index
+                    let (_, n) = read_u32_leb128(&section[cur..])?; cur += n;
+                    f(mod_name, func_name);
+                }
+                1 => { // table: reftype + limits
+                    cur += 1; // reftype
+                    let flag = *section.get(cur)?; cur += 1;
+                    let (_, n) = read_u32_leb128(&section[cur..])?; cur += n;
+                    if flag != 0 { let (_, n) = read_u32_leb128(&section[cur..])?; cur += n; }
+                }
+                2 => { // memory: limits
+                    let flag = *section.get(cur)?; cur += 1;
+                    let (_, n) = read_u32_leb128(&section[cur..])?; cur += n;
+                    if flag != 0 { let (_, n) = read_u32_leb128(&section[cur..])?; cur += n; }
+                }
+                3 => { cur += 2; } // global: valtype + mutability
+                _ => return None,
+            }
+        }
+        Some(())
+    }
+    inner(section, f);
+}
+
 // ── Memory section helper ─────────────────────────────────────────────────────
 
 /// Parse the memory section and return the `min` page count.
