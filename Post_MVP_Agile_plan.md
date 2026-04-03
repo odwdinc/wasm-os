@@ -132,10 +132,10 @@ Each `run` call gets a clean, isolated instance.
 
 ### 2. Configurable Memory Size
 
-* [ ] Read memory section `min` pages (1 page = 64 KiB)
-* [ ] Allocate `min * 65536` bytes for instance memory (static pool — no heap)
-* [ ] Cap at a kernel-configured max (e.g. 4 pages = 256 KiB)
-* [ ] Return `RunError::MemoryTooLarge` if request exceeds cap
+* [x] Read memory section `min` pages (1 page = 64 KiB)
+* [x] Allocate `min * 65536` bytes for instance memory (static pool — no heap)
+* [x] Cap at a kernel-configured max (e.g. 4 pages = 256 KiB)
+* [x] Return `RunError::MemoryTooLarge` if request exceeds cap
 
 ---
 

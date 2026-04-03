@@ -3,8 +3,19 @@
 //! `run(bytes, func_idx)` — parse, init memory, dispatch host calls, execute.
 //! `HELLO_WASM`           — embedded test module that prints "Hello from WASM!\n".
 
-use super::loader::{load, find_export, LoadError, read_u32_leb128};
+use super::loader::{load, find_export, read_memory_min_pages, LoadError, read_u32_leb128};
 use super::interp::{Interpreter, InterpError, HostFn, STACK_DEPTH, read_i32_leb128};
+
+// ── Memory pool ───────────────────────────────────────────────────────────────
+
+/// Maximum pages a module may request (1 page = 64 KiB).
+pub const MAX_MEM_PAGES: u32 = 4;
+const PAGE_SIZE: usize = 65536;
+
+/// Single static memory pool.  Only one WASM instance runs at a time, so
+/// there is no aliasing.  Zeroed at each `instantiate` call.
+static mut WASM_MEM: [u8; MAX_MEM_PAGES as usize * PAGE_SIZE] =
+    [0; MAX_MEM_PAGES as usize * PAGE_SIZE];
 
 // ── Error type ───────────────────────────────────────────────────────────────
 
@@ -12,14 +23,16 @@ pub enum RunError {
     Load(LoadError),
     Interp(InterpError),
     EntryNotFound,
+    MemoryTooLarge,
 }
 
 impl RunError {
     pub fn as_str(&self) -> &'static str {
         match self {
-            RunError::Load(e)   => e.as_str(),
-            RunError::Interp(e) => e.as_str(),
+            RunError::Load(e)       => e.as_str(),
+            RunError::Interp(e)     => e.as_str(),
             RunError::EntryNotFound => "entry point not found in exports",
+            RunError::MemoryTooLarge => "module requests more memory than the kernel allows",
         }
     }
 }
@@ -214,7 +227,23 @@ pub fn instantiate<'a>(bytes: &'a [u8], host_fn: HostFn) -> Result<Instance<'a>,
     let module       = load(bytes).map_err(RunError::Load)?;
     let import_count = count_func_imports(module.import_section);
 
-    let mut interp = Interpreter::new(&module, import_count)
+    // Determine how many pages this module needs and validate against the cap.
+    let min_pages = module.memory_section
+        .map(read_memory_min_pages)
+        .unwrap_or(0);
+    if min_pages > MAX_MEM_PAGES {
+        return Err(RunError::MemoryTooLarge);
+    }
+    let mem_bytes = min_pages as usize * PAGE_SIZE;
+
+    // Zero the relevant portion of the static pool and take a mutable slice.
+    // SAFETY: single-threaded kernel — only one instance exists at a time.
+    let mem: &'static mut [u8] = unsafe {
+        WASM_MEM[..mem_bytes].fill(0);
+        &mut WASM_MEM[..mem_bytes]
+    };
+
+    let mut interp = Interpreter::new(&module, import_count, mem)
         .map_err(RunError::Interp)?;
     interp.host_fn = host_fn;
 

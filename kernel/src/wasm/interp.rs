@@ -104,7 +104,7 @@ const NULL_FUNC: u32 = u32::MAX; // sentinel for an uninitialised table entry
 pub const MAX_CTRL_DEPTH: usize = 64; // total across all live call frames
 pub const STACK_DEPTH:    usize = 256;
 pub const CALL_DEPTH:     usize = 128;
-pub const MEM_SIZE:       usize = 4096;
+const PAGE_SIZE: usize = 65536;
 
 const NO_ELSE: usize = usize::MAX;
 
@@ -242,12 +242,12 @@ pub struct Interpreter<'a> {
     global_mutable:  [bool; MAX_GLOBALS],
     global_count:    usize,
 
-    pub mem:     [u8; MEM_SIZE],
+    pub mem:     &'a mut [u8],
     pub host_fn: HostFn,
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(module: &Module<'a>, import_count: usize) -> Result<Self, InterpError> {
+    pub fn new(module: &Module<'a>, import_count: usize, mem: &'a mut [u8]) -> Result<Self, InterpError> {
         let mut type_param_counts  = [0usize; MAX_TYPES];
         let mut type_result_counts = [0usize; MAX_TYPES];
         let type_count = if let Some(tb) = module.type_section {
@@ -298,7 +298,7 @@ impl<'a> Interpreter<'a> {
             ctrl: [BLANK_CTRL; MAX_CTRL_DEPTH], ctrl_depth: 0,
             globals, global_mutable, global_count,
 
-            mem: [0u8; MEM_SIZE],
+            mem,
             host_fn: default_host,
         })
     }
@@ -697,8 +697,7 @@ impl<'a> Interpreter<'a> {
                 OP_MEMORY_SIZE => {
                     let fi = self.fdepth - 1;
                     self.frames[fi].pc += 1; // skip reserved 0x00 byte
-                    // MEM_SIZE < one WASM page (64 KiB); report 0 pages.
-                    self.v_push(0)?;
+                    self.v_push((self.mem.len() / PAGE_SIZE) as i64)?;
                 }
                 OP_MEMORY_GROW => {
                     let fi = self.fdepth - 1;
@@ -821,7 +820,7 @@ impl<'a> Interpreter<'a> {
                     let callee = callee as usize;
                     if callee < self.import_count {
                         let host = self.host_fn;
-                        host(callee, &mut self.vstack, &mut self.vsp, &mut self.mem)?;
+                        host(callee, &mut self.vstack, &mut self.vsp, &mut *self.mem)?;
                     } else {
                         let body_idx = callee - self.import_count;
                         if body_idx >= self.body_count { return Err(InterpError::FuncIndexOutOfRange); }
@@ -854,7 +853,7 @@ impl<'a> Interpreter<'a> {
 
                     if callee < self.import_count {
                         let host = self.host_fn;
-                        host(callee, &mut self.vstack, &mut self.vsp, &mut self.mem)?;
+                        host(callee, &mut self.vstack, &mut self.vsp, &mut *self.mem)?;
                     } else {
                         let body_idx = callee - self.import_count;
                         if body_idx >= self.body_count { return Err(InterpError::FuncIndexOutOfRange); }

@@ -7,6 +7,7 @@ pub const SECTION_TYPE:     u8 = 1;
 pub const SECTION_IMPORT:   u8 = 2;
 pub const SECTION_FUNCTION: u8 = 3;
 pub const SECTION_TABLE:    u8 = 4;
+pub const SECTION_MEMORY:   u8 = 5;
 pub const SECTION_GLOBAL:   u8 = 6;
 pub const SECTION_EXPORT:   u8 = 7;
 pub const SECTION_ELEMENT:  u8 = 9;
@@ -47,6 +48,7 @@ pub struct Module<'a> {
     pub import_section:   Option<&'a [u8]>,
     pub function_section: Option<&'a [u8]>,
     pub table_section:    Option<&'a [u8]>,
+    pub memory_section:   Option<&'a [u8]>,
     pub global_section:   Option<&'a [u8]>,
     pub export_section:   Option<&'a [u8]>,
     pub element_section:  Option<&'a [u8]>,
@@ -108,6 +110,30 @@ pub fn find_export(module: &Module, name: &str) -> Option<u32> {
     None
 }
 
+// ── Memory section helper ─────────────────────────────────────────────────────
+
+/// Parse the memory section and return the `min` page count.
+/// Returns 0 if the section is absent or malformed.
+///
+/// Memory section layout (WASM MVP):
+///   count : u32 LEB128   (always 1)
+///   flags : u8           (0 = no max, 1 = has max)
+///   min   : u32 LEB128
+///   [max  : u32 LEB128]  (only when flags == 1)
+pub fn read_memory_min_pages(section: &[u8]) -> u32 {
+    fn inner(section: &[u8]) -> Option<u32> {
+        let mut cur = 0usize;
+        let (count, n) = read_u32_leb128(section)?;
+        cur += n;
+        if count == 0 { return Some(0); }
+        if cur >= section.len() { return None; }
+        cur += 1; // skip flags byte — we only need min
+        let (min, _) = read_u32_leb128(&section[cur..])?;
+        Some(min)
+    }
+    inner(section).unwrap_or(0)
+}
+
 // ── Main entry point ─────────────────────────────────────────────────────────
 /// Parse `bytes` as a WASM binary.
 /// On success returns a `Module` whose slices reference `bytes` directly.
@@ -128,6 +154,7 @@ pub fn load(bytes: &[u8]) -> Result<Module<'_>, LoadError> {
         import_section:   None,
         function_section: None,
         table_section:    None,
+        memory_section:   None,
         global_section:   None,
         export_section:   None,
         element_section:  None,
@@ -158,12 +185,13 @@ pub fn load(bytes: &[u8]) -> Result<Module<'_>, LoadError> {
             SECTION_IMPORT   => module.import_section   = Some(data),
             SECTION_FUNCTION => module.function_section = Some(data),
             SECTION_TABLE    => module.table_section    = Some(data),
+            SECTION_MEMORY   => module.memory_section   = Some(data),
             SECTION_GLOBAL   => module.global_section   = Some(data),
             SECTION_EXPORT   => module.export_section   = Some(data),
             SECTION_ELEMENT  => module.element_section  = Some(data),
             SECTION_CODE     => module.code_section     = Some(data),
             SECTION_DATA     => module.data_section     = Some(data),
-            _                => {} // custom / memory / etc. — skip
+            _                => {} // custom sections — skip
         }
     }
 
