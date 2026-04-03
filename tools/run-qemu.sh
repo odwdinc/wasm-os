@@ -1,14 +1,41 @@
 #!/usr/bin/env bash
 # Build pipeline step 3 of 3: build everything, then boot in QEMU.
 #
-# Usage: run-qemu.sh [debug|release]
+# Usage: run-qemu.sh [debug|release|headless]
+#
+#   debug    (default) — build debug, show VGA window, serial → stdio
+#   release            — build release, show VGA window, serial → stdio
+#   headless           — build debug, no VGA window (serial only, good for CI)
+#
+# The serial port (COM1) is always connected to stdio via the QEMU monitor
+# multiplexer (-serial mon:stdio).  In headless mode that is the only UI.
+# Press Ctrl-A X to quit QEMU from the serial console.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
-PROFILE="${1:-debug}"
+ARG="${1:-debug}"
+
+case "$ARG" in
+    headless)
+        PROFILE="debug"
+        DISPLAY_ARGS="-display none"
+        ;;
+    release)
+        PROFILE="release"
+        DISPLAY_ARGS=""
+        ;;
+    debug|"")
+        PROFILE="debug"
+        DISPLAY_ARGS=""
+        ;;
+    *)
+        echo "usage: run-qemu.sh [debug|release|headless]"
+        exit 1
+        ;;
+esac
 
 # 1. Run the full build pipeline (wasm-pack → kernel → disk image).
 "$SCRIPT_DIR/build-image.sh" "$PROFILE"
@@ -29,10 +56,13 @@ if ! command -v qemu-system-x86_64 &>/dev/null; then
     exit 1
 fi
 
-echo "booting $IMG..."
+echo "booting $IMG  [profile=$PROFILE${DISPLAY_ARGS:+, headless}]..."
+echo "serial → stdio  (Ctrl-A X to quit)"
+# shellcheck disable=SC2086
 qemu-system-x86_64 \
     -drive format=raw,file="$IMG" \
     -m 512M \
-    -serial stdio \
+    -serial mon:stdio \
     -no-reboot \
-    -no-shutdown
+    -no-shutdown \
+    $DISPLAY_ARGS

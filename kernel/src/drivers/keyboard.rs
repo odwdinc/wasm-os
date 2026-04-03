@@ -28,6 +28,33 @@ pub enum Key {
     Unknown,
 }
 
+/// Non-blocking: decode one scancode if the PS/2 buffer has data.
+/// Returns `None` if no data is ready.
+/// Key-release and shift-key events update state and return `None`.
+pub fn try_next_key() -> Option<Key> {
+    if unsafe { inb(STATUS_PORT) } & 0x01 == 0 {
+        return None;
+    }
+    let sc = unsafe { inb(DATA_PORT) };
+
+    match sc {
+        0x2A | 0x36 => { SHIFT.store(true,  Ordering::Relaxed); return None; }
+        0xAA | 0xB6 => { SHIFT.store(false, Ordering::Relaxed); return None; }
+        _ => {}
+    }
+    if sc & 0x80 != 0 { return None; } // key-release
+
+    let shift = SHIFT.load(Ordering::Relaxed);
+    Some(match sc {
+        0x0E => Key::Backspace,
+        0x1C => Key::Enter,
+        _ => match scancode_to_char(sc, shift) {
+            Some(c) => Key::Char(c),
+            None    => Key::Unknown,
+        },
+    })
+}
+
 /// Block until a key-press event is available, then decode and return it.
 /// Key-release and unhandled scancodes are silently consumed.
 pub fn next_key() -> Key {

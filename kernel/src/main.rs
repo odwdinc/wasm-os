@@ -46,6 +46,8 @@ macro_rules! println {
 // ---------------------------------------------------------------------------
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
+    drivers::serial::init();
+
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         let info = fb.info();
         let buf = fb.buffer_mut();
