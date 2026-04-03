@@ -36,12 +36,12 @@ can execute without hitting unsupported opcode errors.
 
 ### 1. i64 Type Support
 
-* [ ] Extend value stack to `i64` (tagged union or separate stack)
-* [ ] `i64.const`, `i64.add`, `i64.sub`, `i64.mul`
-* [ ] `i64.and`, `i64.or`, `i64.xor`, `i64.shl`, `i64.shr_s`, `i64.shr_u`
-* [ ] `i64.eq`, `i64.ne`, `i64.lt_s`, `i64.gt_s`, `i64.eqz`
-* [ ] `i64.load`, `i64.store`
-* [ ] `i32.wrap_i64`, `i64.extend_i32_s`, `i64.extend_i32_u`
+* [x] Extend value stack to `i64` (untyped i64 stack — i32 ops sign-extend results)
+* [x] `i64.const`, `i64.add`, `i64.sub`, `i64.mul`
+* [x] `i64.and`, `i64.or`, `i64.xor`, `i64.shl`, `i64.shr_s`, `i64.shr_u`
+* [x] `i64.eq`, `i64.ne`, `i64.lt_s`, `i64.gt_s`, `i64.eqz`
+* [x] `i64.load`, `i64.store`
+* [x] `i32.wrap_i64`, `i64.extend_i32_s`, `i64.extend_i32_u`
 
 ---
 
@@ -69,9 +69,9 @@ can execute without hitting unsupported opcode errors.
 
 ### 4. Global Variables
 
-* [ ] Parse global section (section ID 6)
-* [ ] Store globals in `Interpreter` (fixed-size array)
-* [ ] `global.get`, `global.set`
+* [x] Parse global section (section ID 6)
+* [x] Store globals in `Interpreter` (fixed-size array)
+* [x] `global.get`, `global.set`
 * [ ] Mutable vs immutable globals (validate on set)
 
 ---
@@ -87,16 +87,16 @@ can execute without hitting unsupported opcode errors.
 
 ### 6. Missing Opcodes
 
-* [ ] `memory.size`, `memory.grow` (grow: stub returning -1 is acceptable for now)
-* [ ] `i32.rem_s`, `i32.rem_u`, `i32.div_s`, `i32.div_u`
-* [ ] `i32.rotl`, `i32.rotr`, `i32.clz`, `i32.ctz`, `i32.popcnt`
-* [ ] `i32.shr_u`
-* [ ] `br_table`
-* [ ] `select` (already in MVP plan, confirm complete)
+* [x] `memory.size`, `memory.grow` (grow: stub returning -1 is acceptable for now)
+* [x] `i32.rem_s`, `i32.rem_u`, `i32.div_s`, `i32.div_u`
+* [x] `i32.rotl`, `i32.rotr`, `i32.clz`, `i32.ctz`, `i32.popcnt`
+* [x] `i32.shr_u`
+* [x] `br_table`
+* [x] `select` (already in MVP plan, confirm complete)
 
 ---
 
-## Done When
+## Done When ✅
 
 A non-trivial module compiled with `rustc --target wasm32-unknown-unknown` (no std, no alloc)
 runs to completion:

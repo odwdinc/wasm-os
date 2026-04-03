@@ -31,7 +31,7 @@ impl RunError {
 ///   index 1 — `print_int(n: i32)`           print decimal integer + newline
 fn kernel_host(
     func_idx: usize,
-    vstack:   &mut [i32],
+    vstack:   &mut [i64],
     vsp:      &mut usize,
     mem:      &mut [u8],
 ) -> Result<(), InterpError> {
@@ -51,7 +51,7 @@ fn kernel_host(
         1 => {
             // print_int(n: i32)
             if *vsp < 1 { return Err(InterpError::StackUnderflow); }
-            let n = vstack[*vsp - 1];
+            let n = vstack[*vsp - 1] as i32;
             *vsp -= 1;
             fmt_i32(n);
             Ok(())
@@ -216,7 +216,7 @@ pub fn run(bytes: &[u8], entry: &str, args: &[i32]) -> Result<Option<i32>, RunEr
         if interp.vsp >= interp.vstack.len() {
             return Err(RunError::Interp(InterpError::StackOverflow));
         }
-        interp.vstack[interp.vsp] = arg;
+        interp.vstack[interp.vsp] = arg as i64;
         interp.vsp += 1;
     }
 
@@ -229,6 +229,7 @@ pub fn run(bytes: &[u8], entry: &str, args: &[i32]) -> Result<Option<i32>, RunEr
 // Source lives under userland/; run tools/wasm-pack.sh to compile .wat → .wasm
 // before building the kernel.
 
-pub const HELLO_WASM: &[u8] = include_bytes!("../../../userland/hello/hello.wasm");
-pub const GREET_WASM: &[u8] = include_bytes!("../../../userland/greet/greet.wasm");
-pub const FIB_WASM:   &[u8] = include_bytes!("../../../userland/fib/fib.wasm");
+pub const HELLO_WASM:  &[u8] = include_bytes!("../../../userland/hello/hello.wasm");
+pub const GREET_WASM:  &[u8] = include_bytes!("../../../userland/greet/greet.wasm");
+pub const FIB_WASM:    &[u8] = include_bytes!("../../../userland/fib/fib.wasm");
+pub const PRIMES_WASM: &[u8] = include_bytes!("../../../userland/primes/primes.wasm");

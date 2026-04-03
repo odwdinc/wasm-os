@@ -1,51 +1,102 @@
-//! WASM interpreter — Sprint 2.2 / 4.1 / 4.2 / 4.3 / 4.4
+//! WASM interpreter — Sprint A
 //!
 //! No heap allocation; everything lives in fixed-size arrays.
 
 use super::loader::{Module, read_u32_leb128};
 
 // ── Opcodes ───────────────────────────────────────────────────────────────────
-const OP_UNREACHABLE: u8 = 0x00;
-const OP_NOP:         u8 = 0x01;
-const OP_BLOCK:       u8 = 0x02;
-const OP_LOOP:        u8 = 0x03;
-const OP_IF:          u8 = 0x04;
-const OP_ELSE:        u8 = 0x05;
-const OP_END:         u8 = 0x0B;
-const OP_BR:          u8 = 0x0C;
-const OP_BR_IF:       u8 = 0x0D;
-const OP_RETURN:      u8 = 0x0F;
-const OP_CALL:        u8 = 0x10;
-const OP_DROP:        u8 = 0x1A;
-const OP_SELECT:      u8 = 0x1B;
-const OP_LOCAL_GET:   u8 = 0x20;
-const OP_LOCAL_SET:   u8 = 0x21;
-const OP_LOCAL_TEE:   u8 = 0x22;
-const OP_I32_LOAD:    u8 = 0x28;
-const OP_I32_LOAD8_U: u8 = 0x2D;
-const OP_I32_STORE:   u8 = 0x36;
-const OP_I32_STORE8:  u8 = 0x3A;
-const OP_I32_CONST:   u8 = 0x41;
-const OP_I32_EQZ:     u8 = 0x45;
-const OP_I32_EQ:      u8 = 0x46;
-const OP_I32_NE:      u8 = 0x47;
-const OP_I32_LT_S:    u8 = 0x48;
-const OP_I32_GT_S:    u8 = 0x4A;
-const OP_I32_LE_S:    u8 = 0x4C;
-const OP_I32_GE_S:    u8 = 0x4E;
-const OP_I32_ADD:     u8 = 0x6A;
-const OP_I32_SUB:     u8 = 0x6B;
-const OP_I32_MUL:     u8 = 0x6C;
-const OP_I32_AND:     u8 = 0x71;
-const OP_I32_OR:      u8 = 0x72;
-const OP_I32_XOR:     u8 = 0x73;
-const OP_I32_SHL:     u8 = 0x74;
-const OP_I32_SHR_S:   u8 = 0x75;
+const OP_UNREACHABLE:   u8 = 0x00;
+const OP_NOP:           u8 = 0x01;
+const OP_BLOCK:         u8 = 0x02;
+const OP_LOOP:          u8 = 0x03;
+const OP_IF:            u8 = 0x04;
+const OP_ELSE:          u8 = 0x05;
+const OP_END:           u8 = 0x0B;
+const OP_BR:            u8 = 0x0C;
+const OP_BR_IF:         u8 = 0x0D;
+const OP_BR_TABLE:      u8 = 0x0E;
+const OP_RETURN:        u8 = 0x0F;
+const OP_CALL:          u8 = 0x10;
+const OP_DROP:          u8 = 0x1A;
+const OP_SELECT:        u8 = 0x1B;
+const OP_LOCAL_GET:     u8 = 0x20;
+const OP_LOCAL_SET:     u8 = 0x21;
+const OP_LOCAL_TEE:     u8 = 0x22;
+const OP_GLOBAL_GET:    u8 = 0x23;
+const OP_GLOBAL_SET:    u8 = 0x24;
+const OP_I32_LOAD:      u8 = 0x28;
+const OP_I32_LOAD8_U:   u8 = 0x2D;
+const OP_I32_STORE:     u8 = 0x36;
+const OP_I32_STORE8:    u8 = 0x3A;
+const OP_MEMORY_SIZE:   u8 = 0x3F;
+const OP_MEMORY_GROW:   u8 = 0x40;
+const OP_I32_CONST:     u8 = 0x41;
+const OP_I32_EQZ:       u8 = 0x45;
+const OP_I32_EQ:        u8 = 0x46;
+const OP_I32_NE:        u8 = 0x47;
+const OP_I32_LT_S:      u8 = 0x48;
+const OP_I32_LT_U:      u8 = 0x49;
+const OP_I32_GT_S:      u8 = 0x4A;
+const OP_I32_GT_U:      u8 = 0x4B;
+const OP_I32_LE_S:      u8 = 0x4C;
+const OP_I32_LE_U:      u8 = 0x4D;
+const OP_I32_GE_S:      u8 = 0x4E;
+const OP_I32_GE_U:      u8 = 0x4F;
+const OP_I32_CLZ:       u8 = 0x67;
+const OP_I32_CTZ:       u8 = 0x68;
+const OP_I32_POPCNT:    u8 = 0x69;
+const OP_I32_ADD:       u8 = 0x6A;
+const OP_I32_SUB:       u8 = 0x6B;
+const OP_I32_MUL:       u8 = 0x6C;
+const OP_I32_DIV_S:     u8 = 0x6D;
+const OP_I32_DIV_U:     u8 = 0x6E;
+const OP_I32_REM_S:     u8 = 0x6F;
+const OP_I32_REM_U:     u8 = 0x70;
+const OP_I32_AND:       u8 = 0x71;
+const OP_I32_OR:        u8 = 0x72;
+const OP_I32_XOR:       u8 = 0x73;
+const OP_I32_SHL:       u8 = 0x74;
+const OP_I32_SHR_S:     u8 = 0x75;
+const OP_I32_SHR_U:     u8 = 0x76;
+const OP_I32_ROTL:      u8 = 0x77;
+const OP_I32_ROTR:      u8 = 0x78;
+const OP_I64_CONST:     u8 = 0x42;
+const OP_I64_EQZ:       u8 = 0x50;
+const OP_I64_EQ:        u8 = 0x51;
+const OP_I64_NE:        u8 = 0x52;
+const OP_I64_LT_S:      u8 = 0x53;
+const OP_I64_LT_U:      u8 = 0x54;
+const OP_I64_GT_S:      u8 = 0x55;
+const OP_I64_GT_U:      u8 = 0x56;
+const OP_I64_LE_S:      u8 = 0x57;
+const OP_I64_LE_U:      u8 = 0x58;
+const OP_I64_GE_S:      u8 = 0x59;
+const OP_I64_GE_U:      u8 = 0x5A;
+const OP_I64_LOAD:      u8 = 0x29;
+const OP_I64_STORE:     u8 = 0x37;
+const OP_I64_CLZ:       u8 = 0x79;
+const OP_I64_CTZ:       u8 = 0x7A;
+const OP_I64_POPCNT:    u8 = 0x7B;
+const OP_I64_ADD:       u8 = 0x7C;
+const OP_I64_SUB:       u8 = 0x7D;
+const OP_I64_MUL:       u8 = 0x7E;
+const OP_I64_AND:       u8 = 0x83;
+const OP_I64_OR:        u8 = 0x84;
+const OP_I64_XOR:       u8 = 0x85;
+const OP_I64_SHL:       u8 = 0x86;
+const OP_I64_SHR_S:     u8 = 0x87;
+const OP_I64_SHR_U:     u8 = 0x88;
+const OP_I64_ROTL:      u8 = 0x89;
+const OP_I64_ROTR:      u8 = 0x8A;
+const OP_I32_WRAP_I64:     u8 = 0xA7;
+const OP_I64_EXTEND_I32_S: u8 = 0xAC;
+const OP_I64_EXTEND_I32_U: u8 = 0xAD;
 
 // ── Capacity limits ───────────────────────────────────────────────────────────
 pub const MAX_FUNCS:      usize = 32;
 pub const MAX_TYPES:      usize = 16;
 pub const MAX_LOCALS:     usize = 16;
+pub const MAX_GLOBALS:    usize = 32;
 pub const MAX_CTRL_DEPTH: usize = 64; // total across all live call frames
 pub const STACK_DEPTH:    usize = 256;
 pub const CALL_DEPTH:     usize = 128;
@@ -54,7 +105,8 @@ pub const MEM_SIZE:       usize = 4096;
 const NO_ELSE: usize = usize::MAX;
 
 /// Host dispatch: called for `call N` where N < import_count.
-pub type HostFn = fn(func_idx: usize, vstack: &mut [i32], vsp: &mut usize, mem: &mut [u8])
+/// The value stack holds i64 (i32 values are sign-extended).
+pub type HostFn = fn(func_idx: usize, vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8])
     -> Result<(), InterpError>;
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -65,36 +117,42 @@ pub enum InterpError {
     TooManyFuncs,
     TooManyTypes,
     TooManyLocals,
+    TooManyGlobals,
     CtrlStackOverflow,
     FuncIndexOutOfRange,
     LocalIndexOutOfRange,
+    GlobalIndexOutOfRange,
     IsImport,
     Unreachable,
     StackOverflow,
     StackUnderflow,
     CallStackOverflow,
     MemOutOfBounds,
+    DivisionByZero,
     UnknownOpcode(u8),
 }
 
 impl InterpError {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::NoCodeSection       => "no code section",
-            Self::MalformedCode       => "malformed bytecode",
-            Self::TooManyFuncs        => "too many functions (increase MAX_FUNCS)",
-            Self::TooManyTypes        => "too many types (increase MAX_TYPES)",
-            Self::TooManyLocals       => "too many locals (increase MAX_LOCALS)",
-            Self::CtrlStackOverflow   => "control stack overflow (increase MAX_CTRL_DEPTH)",
-            Self::FuncIndexOutOfRange => "function index out of range",
-            Self::LocalIndexOutOfRange => "local variable index out of range",
-            Self::IsImport            => "call to import (not yet supported)",
-            Self::Unreachable         => "unreachable executed",
-            Self::StackOverflow       => "value stack overflow",
-            Self::StackUnderflow      => "value stack underflow",
-            Self::CallStackOverflow   => "call stack overflow",
-            Self::MemOutOfBounds      => "memory access out of bounds",
-            Self::UnknownOpcode(_)    => "unknown opcode",
+            Self::NoCodeSection         => "no code section",
+            Self::MalformedCode         => "malformed bytecode",
+            Self::TooManyFuncs          => "too many functions (increase MAX_FUNCS)",
+            Self::TooManyTypes          => "too many types (increase MAX_TYPES)",
+            Self::TooManyLocals         => "too many locals (increase MAX_LOCALS)",
+            Self::TooManyGlobals        => "too many globals (increase MAX_GLOBALS)",
+            Self::CtrlStackOverflow     => "control stack overflow (increase MAX_CTRL_DEPTH)",
+            Self::FuncIndexOutOfRange   => "function index out of range",
+            Self::LocalIndexOutOfRange  => "local variable index out of range",
+            Self::GlobalIndexOutOfRange => "global variable index out of range",
+            Self::IsImport              => "call to import (not yet supported)",
+            Self::Unreachable           => "unreachable executed",
+            Self::StackOverflow         => "value stack overflow",
+            Self::StackUnderflow        => "value stack underflow",
+            Self::CallStackOverflow     => "call stack overflow",
+            Self::MemOutOfBounds        => "memory access out of bounds",
+            Self::DivisionByZero        => "integer divide by zero",
+            Self::UnknownOpcode(_)      => "unknown opcode",
         }
     }
 }
@@ -122,7 +180,7 @@ const BLANK_CTRL: CtrlFrame = CtrlFrame {
 struct Frame {
     body_idx:    usize,
     pc:          usize,
-    locals:      [i32; MAX_LOCALS],
+    locals:      [i64; MAX_LOCALS],
     local_count: usize,
     /// ctrl_depth value at the moment this function was entered.
     ctrl_base:   usize,
@@ -130,12 +188,12 @@ struct Frame {
 
 const BLANK_FRAME: Frame = Frame {
     body_idx: 0, pc: 0,
-    locals: [0i32; MAX_LOCALS], local_count: 0,
+    locals: [0i64; MAX_LOCALS], local_count: 0,
     ctrl_base: 0,
 };
 
 // ── Default host ──────────────────────────────────────────────────────────────
-fn default_host(_: usize, _: &mut [i32], _: &mut usize, _: &mut [u8]) -> Result<(), InterpError> {
+fn default_host(_: usize, _: &mut [i64], _: &mut usize, _: &mut [u8]) -> Result<(), InterpError> {
     Err(InterpError::IsImport)
 }
 
@@ -149,7 +207,7 @@ pub struct Interpreter<'a> {
     func_type_indices: [usize; MAX_FUNCS],
     pub import_count:  usize,
 
-    pub vstack: [i32; STACK_DEPTH],
+    pub vstack: [i64; STACK_DEPTH],
     pub vsp:    usize,
 
     frames: [Frame; CALL_DEPTH],
@@ -157,6 +215,9 @@ pub struct Interpreter<'a> {
 
     ctrl:       [CtrlFrame; MAX_CTRL_DEPTH],
     ctrl_depth: usize,
+
+    globals:      [i64; MAX_GLOBALS],
+    global_count: usize,
 
     pub mem:     [u8; MEM_SIZE],
     pub host_fn: HostFn,
@@ -179,13 +240,19 @@ impl<'a> Interpreter<'a> {
         let mut local_counts = [0usize; MAX_FUNCS];
         let body_count = parse_code_section(code_bytes, &mut bodies, &mut local_counts)?;
 
+        let mut globals = [0i64; MAX_GLOBALS];
+        let global_count = if let Some(gb) = module.global_section {
+            parse_global_section(gb, &mut globals)?
+        } else { 0 };
+
         Ok(Self {
             bodies, body_count, local_counts,
             type_param_counts, type_count, func_type_indices,
             import_count,
-            vstack: [0i32; STACK_DEPTH], vsp: 0,
+            vstack: [0i64; STACK_DEPTH], vsp: 0,
             frames: [BLANK_FRAME; CALL_DEPTH], fdepth: 0,
             ctrl: [BLANK_CTRL; MAX_CTRL_DEPTH], ctrl_depth: 0,
+            globals, global_count,
             mem: [0u8; MEM_SIZE],
             host_fn: default_host,
         })
@@ -200,7 +267,7 @@ impl<'a> Interpreter<'a> {
     }
 
     pub fn top_i32(&self) -> Option<i32> {
-        if self.vsp > 0 { Some(self.vstack[self.vsp - 1]) } else { None }
+        if self.vsp > 0 { Some(self.vstack[self.vsp - 1] as i32) } else { None }
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
@@ -216,7 +283,7 @@ impl<'a> Interpreter<'a> {
 
         let mut frame = Frame {
             body_idx, pc: 0,
-            locals: [0i32; MAX_LOCALS], local_count: total,
+            locals: [0i64; MAX_LOCALS], local_count: total,
             ctrl_base: self.ctrl_depth,
         };
         for i in (0..param_count).rev() {
@@ -227,14 +294,14 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
-    fn v_push(&mut self, v: i32) -> Result<(), InterpError> {
+    fn v_push(&mut self, v: i64) -> Result<(), InterpError> {
         if self.vsp >= STACK_DEPTH { return Err(InterpError::StackOverflow); }
         self.vstack[self.vsp] = v;
         self.vsp += 1;
         Ok(())
     }
 
-    pub fn v_pop(&mut self) -> Result<i32, InterpError> {
+    pub fn v_pop(&mut self) -> Result<i64, InterpError> {
         if self.vsp == 0 { return Err(InterpError::StackUnderflow); }
         self.vsp -= 1;
         Ok(self.vstack[self.vsp])
@@ -377,6 +444,29 @@ impl<'a> Interpreter<'a> {
                     }
                 }
 
+                // ── br_table <count> <labels…> <default> ──────────────────────
+                OP_BR_TABLE => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (count, n) = read_u32_leb128(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    let i = self.v_pop()? as u32;
+                    // Walk labels to find target and compute end position.
+                    let mut pos = pc + n;
+                    let mut target_label = 0u32;
+                    for k in 0..=count {
+                        let (label, ln) = read_u32_leb128(&body[pos..])
+                            .ok_or(InterpError::MalformedCode)?;
+                        if k == (if i < count { i } else { count }) {
+                            target_label = label;
+                        }
+                        pos += ln;
+                    }
+                    self.frames[fi].pc = pos;
+                    do_br(self, target_label as usize)?;
+                }
+
                 // ── return ────────────────────────────────────────────────────
                 OP_RETURN => {
                     let fi = self.fdepth - 1;
@@ -392,6 +482,7 @@ impl<'a> Interpreter<'a> {
                     let a    = self.v_pop()?;
                     self.v_push(if cond != 0 { a } else { b })?;
                 }
+
 
                 // ── local.get/set/tee ─────────────────────────────────────────
                 OP_LOCAL_GET => {
@@ -432,6 +523,31 @@ impl<'a> Interpreter<'a> {
                     self.frames[fi].locals[idx] = val;
                 }
 
+                // ── global.get / global.set ───────────────────────────────────
+                OP_GLOBAL_GET => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (idx, consumed) = read_u32_leb128(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let idx = idx as usize;
+                    if idx >= self.global_count { return Err(InterpError::GlobalIndexOutOfRange); }
+                    let val = self.globals[idx];
+                    self.v_push(val)?;
+                }
+                OP_GLOBAL_SET => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (idx, consumed) = read_u32_leb128(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let idx = idx as usize;
+                    if idx >= self.global_count { return Err(InterpError::GlobalIndexOutOfRange); }
+                    self.globals[idx] = self.v_pop()?;
+                }
+
                 // ── memory loads ──────────────────────────────────────────────
                 OP_I32_LOAD => {
                     let fi   = self.fdepth - 1;
@@ -446,7 +562,7 @@ impl<'a> Interpreter<'a> {
                     let val = i32::from_le_bytes([
                         self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3],
                     ]);
-                    self.v_push(val)?;
+                    self.v_push(val as i64)?;
                 }
                 OP_I32_LOAD8_U => {
                     let fi   = self.fdepth - 1;
@@ -458,7 +574,23 @@ impl<'a> Interpreter<'a> {
                     let addr = self.v_pop()? as u32 as usize;
                     let ea   = addr.wrapping_add(offset as usize);
                     if ea >= self.mem.len() { return Err(InterpError::MemOutOfBounds); }
-                    self.v_push(self.mem[ea] as i32)?;
+                    self.v_push(self.mem[ea] as i64)?;
+                }
+                OP_I64_LOAD => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 8 > self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    let val = i64::from_le_bytes([
+                        self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3],
+                        self.mem[ea+4], self.mem[ea+5], self.mem[ea+6], self.mem[ea+7],
+                    ]);
+                    self.v_push(val)?;
                 }
 
                 // ── memory stores ─────────────────────────────────────────────
@@ -469,7 +601,7 @@ impl<'a> Interpreter<'a> {
                     let (offset, consumed) = read_memarg(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     self.frames[fi].pc += consumed;
-                    let val  = self.v_pop()?;
+                    let val  = self.v_pop()? as i32;
                     let addr = self.v_pop()? as u32 as usize;
                     let ea   = addr.wrapping_add(offset as usize);
                     if ea + 4 > self.mem.len() { return Err(InterpError::MemOutOfBounds); }
@@ -482,14 +614,41 @@ impl<'a> Interpreter<'a> {
                     let (offset, consumed) = read_memarg(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     self.frames[fi].pc += consumed;
-                    let val  = self.v_pop()?;
+                    let val  = self.v_pop()? as u8;
                     let addr = self.v_pop()? as u32 as usize;
                     let ea   = addr.wrapping_add(offset as usize);
                     if ea >= self.mem.len() { return Err(InterpError::MemOutOfBounds); }
-                    self.mem[ea] = val as u8;
+                    self.mem[ea] = val;
+                }
+                OP_I64_STORE => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let val  = self.v_pop()?;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 8 > self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    self.mem[ea..ea+8].copy_from_slice(&val.to_le_bytes());
                 }
 
-                // ── i32.const ────────────────────────────────────────────────
+                // ── memory.size / memory.grow ─────────────────────────────────
+                OP_MEMORY_SIZE => {
+                    let fi = self.fdepth - 1;
+                    self.frames[fi].pc += 1; // skip reserved 0x00 byte
+                    // MEM_SIZE < one WASM page (64 KiB); report 0 pages.
+                    self.v_push(0)?;
+                }
+                OP_MEMORY_GROW => {
+                    let fi = self.fdepth - 1;
+                    self.frames[fi].pc += 1; // skip reserved 0x00 byte
+                    self.v_pop()?;           // discard requested delta
+                    self.v_push(-1i64)?;     // always fails (fixed memory)
+                }
+
+                // ── i32.const / i64.const ────────────────────────────────────
                 OP_I32_CONST => {
                     let fi   = self.fdepth - 1;
                     let pc   = self.frames[fi].pc;
@@ -497,27 +656,100 @@ impl<'a> Interpreter<'a> {
                     let (val, consumed) = read_i32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     self.frames[fi].pc += consumed;
+                    self.v_push(val as i64)?;
+                }
+                OP_I64_CONST => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (val, consumed) = read_i64_leb128(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
                     self.v_push(val)?;
                 }
 
                 // ── i32 comparisons ───────────────────────────────────────────
-                OP_I32_EQZ  => { let a = self.v_pop()?; self.v_push(if a == 0 { 1 } else { 0 })?; }
-                OP_I32_EQ   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a == b { 1 } else { 0 })?; }
-                OP_I32_NE   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a != b { 1 } else { 0 })?; }
-                OP_I32_LT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <  b { 1 } else { 0 })?; }
-                OP_I32_GT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >  b { 1 } else { 0 })?; }
-                OP_I32_LE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <= b { 1 } else { 0 })?; }
-                OP_I32_GE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >= b { 1 } else { 0 })?; }
+                OP_I32_EQZ  => { let a = self.v_pop()? as i32; self.v_push(if a == 0 { 1 } else { 0 })?; }
+                OP_I32_EQ   => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a == b { 1 } else { 0 })?; }
+                OP_I32_NE   => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a != b { 1 } else { 0 })?; }
+                OP_I32_LT_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a <  b { 1 } else { 0 })?; }
+                OP_I32_LT_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a <  b { 1 } else { 0 })?; }
+                OP_I32_GT_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a >  b { 1 } else { 0 })?; }
+                OP_I32_GT_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a >  b { 1 } else { 0 })?; }
+                OP_I32_LE_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a <= b { 1 } else { 0 })?; }
+                OP_I32_LE_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a <= b { 1 } else { 0 })?; }
+                OP_I32_GE_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a >= b { 1 } else { 0 })?; }
+                OP_I32_GE_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a >= b { 1 } else { 0 })?; }
+
+                // ── i64 comparisons ───────────────────────────────────────────
+                OP_I64_EQZ  => { let a = self.v_pop()?; self.v_push(if a == 0 { 1 } else { 0 })?; }
+                OP_I64_EQ   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a == b { 1 } else { 0 })?; }
+                OP_I64_NE   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a != b { 1 } else { 0 })?; }
+                OP_I64_LT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <  b { 1 } else { 0 })?; }
+                OP_I64_LT_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a <  b { 1 } else { 0 })?; }
+                OP_I64_GT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >  b { 1 } else { 0 })?; }
+                OP_I64_GT_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a >  b { 1 } else { 0 })?; }
+                OP_I64_LE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <= b { 1 } else { 0 })?; }
+                OP_I64_LE_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a <= b { 1 } else { 0 })?; }
+                OP_I64_GE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >= b { 1 } else { 0 })?; }
+                OP_I64_GE_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a >= b { 1 } else { 0 })?; }
 
                 // ── i32 arithmetic ────────────────────────────────────────────
-                OP_I32_ADD   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_add(b))?; }
-                OP_I32_SUB   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_sub(b))?; }
-                OP_I32_MUL   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_mul(b))?; }
-                OP_I32_AND   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a & b)?; }
-                OP_I32_OR    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a | b)?; }
-                OP_I32_XOR   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a ^ b)?; }
-                OP_I32_SHL   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_shl(b as u32 & 31))?; }
-                OP_I32_SHR_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_shr(b as u32 & 31))?; }
+                OP_I32_CLZ    => { let a = self.v_pop()? as i32; self.v_push((a as u32).leading_zeros() as i64)?; }
+                OP_I32_CTZ    => { let a = self.v_pop()? as i32; self.v_push((a as u32).trailing_zeros() as i64)?; }
+                OP_I32_POPCNT => { let a = self.v_pop()? as i32; self.v_push((a as u32).count_ones() as i64)?; }
+                OP_I32_ADD    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_add(b) as i64)?; }
+                OP_I32_SUB    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_sub(b) as i64)?; }
+                OP_I32_MUL    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_mul(b) as i64)?; }
+                OP_I32_DIV_S  => {
+                    let b = self.v_pop()? as i32; let a = self.v_pop()? as i32;
+                    if b == 0 { return Err(InterpError::DivisionByZero); }
+                    self.v_push(a.wrapping_div(b) as i64)?;
+                }
+                OP_I32_DIV_U  => {
+                    let b = self.v_pop()? as u32; let a = self.v_pop()? as u32;
+                    if b == 0 { return Err(InterpError::DivisionByZero); }
+                    self.v_push((a / b) as i64)?;
+                }
+                OP_I32_REM_S  => {
+                    let b = self.v_pop()? as i32; let a = self.v_pop()? as i32;
+                    if b == 0 { return Err(InterpError::DivisionByZero); }
+                    self.v_push(a.wrapping_rem(b) as i64)?;
+                }
+                OP_I32_REM_U  => {
+                    let b = self.v_pop()? as u32; let a = self.v_pop()? as u32;
+                    if b == 0 { return Err(InterpError::DivisionByZero); }
+                    self.v_push((a % b) as i64)?;
+                }
+                OP_I32_AND    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push((a & b) as i64)?; }
+                OP_I32_OR     => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push((a | b) as i64)?; }
+                OP_I32_XOR    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push((a ^ b) as i64)?; }
+                OP_I32_SHL    => { let b = self.v_pop()? as u32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_shl(b & 31) as i64)?; }
+                OP_I32_SHR_S  => { let b = self.v_pop()? as u32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_shr(b & 31) as i64)?; }
+                OP_I32_SHR_U  => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(a.wrapping_shr(b & 31) as i64)?; }
+                OP_I32_ROTL   => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(a.rotate_left(b & 31) as i32 as i64)?; }
+                OP_I32_ROTR   => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(a.rotate_right(b & 31) as i32 as i64)?; }
+
+                // ── i64 arithmetic ────────────────────────────────────────────
+                OP_I64_CLZ    => { let a = self.v_pop()?; self.v_push((a as u64).leading_zeros() as i64)?; }
+                OP_I64_CTZ    => { let a = self.v_pop()?; self.v_push((a as u64).trailing_zeros() as i64)?; }
+                OP_I64_POPCNT => { let a = self.v_pop()?; self.v_push((a as u64).count_ones() as i64)?; }
+                OP_I64_ADD    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_add(b))?; }
+                OP_I64_SUB    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_sub(b))?; }
+                OP_I64_MUL    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_mul(b))?; }
+                OP_I64_AND    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a & b)?; }
+                OP_I64_OR     => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a | b)?; }
+                OP_I64_XOR    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a ^ b)?; }
+                OP_I64_SHL    => { let b = self.v_pop()? as u64; let a = self.v_pop()?; self.v_push(a.wrapping_shl((b & 63) as u32))?; }
+                OP_I64_SHR_S  => { let b = self.v_pop()? as u64; let a = self.v_pop()?; self.v_push(a.wrapping_shr((b & 63) as u32))?; }
+                OP_I64_SHR_U  => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(a.wrapping_shr((b & 63) as u32) as i64)?; }
+                OP_I64_ROTL   => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(a.rotate_left((b & 63) as u32) as i64)?; }
+                OP_I64_ROTR   => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(a.rotate_right((b & 63) as u32) as i64)?; }
+
+                // ── type conversions ──────────────────────────────────────────
+                OP_I32_WRAP_I64     => { let a = self.v_pop()?; self.v_push(a as i32 as i64)?; }
+                OP_I64_EXTEND_I32_S => { let a = self.v_pop()? as i32; self.v_push(a as i64)?; }
+                OP_I64_EXTEND_I32_U => { let a = self.v_pop()? as u32; self.v_push(a as i64)?; }
 
                 // ── call ──────────────────────────────────────────────────────
                 OP_CALL => {
@@ -733,7 +965,58 @@ fn parse_code_section<'a>(
     Ok(count)
 }
 
+fn parse_global_section(bytes: &[u8], out: &mut [i64; MAX_GLOBALS]) -> Result<usize, InterpError> {
+    let mut cur = 0usize;
+    let (count, n) = read_u32_leb128(bytes).ok_or(InterpError::MalformedCode)?;
+    cur += n;
+    let count = count as usize;
+    if count > MAX_GLOBALS { return Err(InterpError::TooManyGlobals); }
+
+    for i in 0..count {
+        // valtype (1 byte) + mutability (1 byte)
+        if cur + 2 > bytes.len() { return Err(InterpError::MalformedCode); }
+        cur += 2;
+        // Init expression: i32.const or i64.const, then end (0x0B)
+        if cur >= bytes.len() { return Err(InterpError::MalformedCode); }
+        let init_op = bytes[cur]; cur += 1;
+        let val = match init_op {
+            0x41 => { // i32.const
+                let (v, n) = read_i32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                cur += n;
+                v as i64
+            }
+            0x42 => { // i64.const
+                let (v, n) = read_i64_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                cur += n;
+                v
+            }
+            _ => return Err(InterpError::MalformedCode),
+        };
+        if cur >= bytes.len() || bytes[cur] != 0x0B { return Err(InterpError::MalformedCode); }
+        cur += 1;
+        out[i] = val;
+    }
+    Ok(count)
+}
+
 // ── Signed LEB-128 ────────────────────────────────────────────────────────────
+
+pub fn read_i64_leb128(bytes: &[u8]) -> Option<(i64, usize)> {
+    let mut result: i64 = 0;
+    let mut shift: u32  = 0;
+    for (i, &byte) in bytes.iter().enumerate() {
+        if shift >= 70 { return None; }
+        result |= ((byte & 0x7F) as i64) << shift;
+        shift += 7;
+        if byte & 0x80 == 0 {
+            if shift < 64 && (byte & 0x40) != 0 {
+                result |= !0i64 << shift;
+            }
+            return Some((result, i + 1));
+        }
+    }
+    None
+}
 
 pub fn read_i32_leb128(bytes: &[u8]) -> Option<(i32, usize)> {
     let mut result: i32 = 0;

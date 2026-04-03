@@ -6,6 +6,7 @@
 pub const SECTION_TYPE:     u8 = 1;
 pub const SECTION_IMPORT:   u8 = 2;
 pub const SECTION_FUNCTION: u8 = 3;
+pub const SECTION_GLOBAL:   u8 = 6;
 pub const SECTION_EXPORT:   u8 = 7;
 pub const SECTION_CODE:     u8 = 10;
 pub const SECTION_DATA:     u8 = 11;
@@ -43,6 +44,7 @@ pub struct Module<'a> {
     pub type_section:     Option<&'a [u8]>,
     pub import_section:   Option<&'a [u8]>,
     pub function_section: Option<&'a [u8]>,
+    pub global_section:   Option<&'a [u8]>,
     pub export_section:   Option<&'a [u8]>,
     pub code_section:     Option<&'a [u8]>,
     pub data_section:     Option<&'a [u8]>,
@@ -121,6 +123,7 @@ pub fn load(bytes: &[u8]) -> Result<Module<'_>, LoadError> {
         type_section:     None,
         import_section:   None,
         function_section: None,
+        global_section:   None,
         export_section:   None,
         code_section:     None,
         data_section:     None,
@@ -148,6 +151,7 @@ pub fn load(bytes: &[u8]) -> Result<Module<'_>, LoadError> {
             SECTION_TYPE     => module.type_section     = Some(data),
             SECTION_IMPORT   => module.import_section   = Some(data),
             SECTION_FUNCTION => module.function_section = Some(data),
+            SECTION_GLOBAL   => module.global_section   = Some(data),
             SECTION_EXPORT   => module.export_section   = Some(data),
             SECTION_CODE     => module.code_section     = Some(data),
             SECTION_DATA     => module.data_section     = Some(data),
