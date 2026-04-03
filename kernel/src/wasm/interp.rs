@@ -247,7 +247,7 @@ pub struct Interpreter<'a> {
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(module: &'a Module<'a>, import_count: usize) -> Result<Self, InterpError> {
+    pub fn new(module: &Module<'a>, import_count: usize) -> Result<Self, InterpError> {
         let mut type_param_counts  = [0usize; MAX_TYPES];
         let mut type_result_counts = [0usize; MAX_TYPES];
         let type_count = if let Some(tb) = module.type_section {
@@ -311,6 +311,16 @@ impl<'a> Interpreter<'a> {
         self.run()
     }
 
+    /// Reset only the execution state (stack, call frames, control stack).
+    /// Memory and globals are preserved — call this between invocations on the
+    /// same instance rather than creating a new Interpreter from scratch.
+    pub fn reset_for_call(&mut self) {
+        self.vsp        = 0;
+        self.fdepth     = 0;
+        self.ctrl_depth = 0;
+    }
+
+    #[allow(dead_code)]
     pub fn top_i32(&self) -> Option<i32> {
         if self.vsp > 0 { Some(self.vstack[self.vsp - 1] as i32) } else { None }
     }

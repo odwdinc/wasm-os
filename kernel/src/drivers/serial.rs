@@ -56,14 +56,12 @@ pub fn init() {
     }
 }
 
-/// Transmit one byte, polling until the UART is ready.
+/// Transmit one byte.
+/// QEMU's emulated 16550 accepts bytes instantly so we write unconditionally.
+/// On real hardware this may occasionally drop a byte under very high output
+/// rates; add LSR polling back when running on physical silicon.
 pub fn write_byte(b: u8) {
-    unsafe {
-        while inb(COM1 + OFF_LSR) & LSR_TX_EMPTY == 0 {
-            core::hint::spin_loop();
-        }
-        outb(COM1 + OFF_DATA, b);
-    }
+    unsafe { outb(COM1 + OFF_DATA, b); }
 }
 
 /// Write a string, converting bare `\n` to `\r\n` for terminals.
@@ -74,6 +72,19 @@ pub fn write_str(s: &str) {
         }
         write_byte(b);
     }
+}
+
+/// Called by the print! macro — formats `args` and writes to serial.
+pub fn _print(args: core::fmt::Arguments) {
+    use core::fmt::Write;
+    struct Writer;
+    impl core::fmt::Write for Writer {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            write_str(s);
+            Ok(())
+        }
+    }
+    Writer.write_fmt(args).ok();
 }
 
 /// Non-blocking receive.  Returns `Some(byte)` if the UART has data, `None` otherwise.

@@ -57,6 +57,7 @@ pub fn try_next_key() -> Option<Key> {
 
 /// Block until a key-press event is available, then decode and return it.
 /// Key-release and unhandled scancodes are silently consumed.
+#[allow(dead_code)]
 pub fn next_key() -> Key {
     loop {
         // Wait: status bit 0 = output buffer full = data ready.

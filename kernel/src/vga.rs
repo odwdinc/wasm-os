@@ -287,39 +287,11 @@ pub fn clear_screen() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tee writer — sends characters to VGA and serial simultaneously
-// ---------------------------------------------------------------------------
-
-struct Tee<'a> {
-    vga: &'a mut VgaBuffer,
-}
-
-impl core::fmt::Write for Tee<'_> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        for c in s.chars() {
-            self.vga.write_char(c);
-        }
-        crate::drivers::serial::write_str(s);
-        Ok(())
-    }
-}
-
-/// Called by the print! macro.
-/// Output goes to both the VGA framebuffer and the serial console.
+/// Called by the print! macro — writes to the VGA framebuffer only.
+/// The print! macro also calls serial::_print separately.
 pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;
     if let Some(w) = WRITER.lock().as_mut() {
-        Tee { vga: w }.write_fmt(args).ok();
-    } else {
-        // VGA not yet initialised — serial only.
-        struct SerialOnly;
-        impl core::fmt::Write for SerialOnly {
-            fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                crate::drivers::serial::write_str(s);
-                Ok(())
-            }
-        }
-        SerialOnly.write_fmt(args).ok();
+        w.write_fmt(args).ok();
     }
 }

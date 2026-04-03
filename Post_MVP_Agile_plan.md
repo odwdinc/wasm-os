@@ -123,10 +123,10 @@ Each `run` call gets a clean, isolated instance.
 
 ### 1. Module Instance Type
 
-* [ ] Define `Instance` struct: owns `mem: [u8; MEM_SIZE]`, `globals`, `host_fn`
-* [ ] `engine::instantiate(bytes, entry) -> Result<Instance, RunError>`
-* [ ] `engine::call(instance, entry) -> Result<..., RunError>`
-* [ ] Remove global mutable state from `Interpreter` — all state lives in `Instance`
+* [x] Define `Instance` struct: owns `mem: [u8; MEM_SIZE]`, `globals`, `host_fn`
+* [x] `engine::instantiate(bytes, entry) -> Result<Instance, RunError>`
+* [x] `engine::call(instance, entry) -> Result<..., RunError>`
+* [x] Remove global mutable state from `Interpreter` — all state lives in `Instance`
 
 ---
 

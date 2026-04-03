@@ -13,7 +13,7 @@ use core::panic::PanicInfo;
 
 const BOOTLOADER_CONFIG: BootloaderConfig = {
     let mut c = BootloaderConfig::new_default();
-    c.kernel_stack_size = 256 * 1024; // 256 KiB — plenty for nested WASM calls
+    c.kernel_stack_size = 512 * 1024; // 512 KiB — Instance+Interpreter are large stack types
     c
 };
 
@@ -25,9 +25,10 @@ entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => {
-        $crate::vga::_print(format_args!($($arg)*))
-    };
+    ($($arg:tt)*) => {{
+        $crate::vga::_print(format_args!($($arg)*));
+        $crate::drivers::serial::_print(format_args!($($arg)*));
+    }};
 }
 
 #[macro_export]
@@ -54,13 +55,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         vga::init(buf, info);
     }
 
-    // Sprint 3.1: register embedded modules into the in-memory FS.
     fs::register_file("hello.wasm",  wasm::engine::HELLO_WASM);
     fs::register_file("greet.wasm",  wasm::engine::GREET_WASM);
     fs::register_file("fib.wasm",    wasm::engine::FIB_WASM);
     fs::register_file("primes.wasm", wasm::engine::PRIMES_WASM);
 
-    // Sprint 2.5: auto-run the embedded WASM module on boot.
     if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, "main", &[]) {
         println!("wasm boot error: {}", e.as_str());
     }

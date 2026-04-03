@@ -4,7 +4,7 @@
 //! `HELLO_WASM`           — embedded test module that prints "Hello from WASM!\n".
 
 use super::loader::{load, find_export, LoadError, read_u32_leb128};
-use super::interp::{Interpreter, InterpError, read_i32_leb128};
+use super::interp::{Interpreter, InterpError, HostFn, STACK_DEPTH, read_i32_leb128};
 
 // ── Error type ───────────────────────────────────────────────────────────────
 
@@ -188,22 +188,35 @@ pub fn count_func_imports(import_section: Option<&[u8]>) -> usize {
     func_count
 }
 
-// ── Public entry point ────────────────────────────────────────────────────────
+// ── Instance ──────────────────────────────────────────────────────────────────
 
-/// Parse `bytes` as a WASM binary, initialise linear memory from data segments,
-/// wire up host functions, look up `entry` in the export section, execute it,
-/// and return the top of the value stack (if any) after execution.
-pub fn run(bytes: &[u8], entry: &str, args: &[i32]) -> Result<Option<i64>, RunError> {
+/// A live, instantiated WASM module.
+///
+/// `mem` and `globals` survive across multiple `call_instance` invocations on
+/// the same `Instance`.  To get a clean slate, create a new `Instance` via
+/// `instantiate`.
+///
+/// The lifetime `'a` is tied to the original byte slice the module was loaded
+/// from.  For embedded (include_bytes!) modules that lifetime is `'static`.
+pub struct Instance<'a> {
+    /// Original binary — retained so export names can be resolved without
+    /// caching a separate export table.
+    bytes:  &'a [u8],
+    /// All interpreter state: bytecode body slices, type/function metadata,
+    /// linear memory, globals, value stack, call frames, host-function pointer.
+    interp: Interpreter<'a>,
+}
+
+/// Parse `bytes` as a WASM binary, initialise linear memory from any active
+/// data segments, and wire up the host-function dispatcher.
+/// Returns a ready-to-call `Instance`.
+pub fn instantiate<'a>(bytes: &'a [u8], host_fn: HostFn) -> Result<Instance<'a>, RunError> {
     let module       = load(bytes).map_err(RunError::Load)?;
     let import_count = count_func_imports(module.import_section);
 
-    let func_idx = find_export(&module, entry)
-        .ok_or(RunError::EntryNotFound)? as usize;
-
     let mut interp = Interpreter::new(&module, import_count)
         .map_err(RunError::Interp)?;
-
-    interp.host_fn = kernel_host;
+    interp.host_fn = host_fn;
 
     if let Some(data) = module.data_section {
         if !init_memory(data, &mut interp.mem) {
@@ -211,17 +224,46 @@ pub fn run(bytes: &[u8], entry: &str, args: &[i32]) -> Result<Option<i64>, RunEr
         }
     }
 
-    // Push caller-supplied arguments onto the value stack before the call.
+    Ok(Instance { bytes, interp })
+}
+
+/// Look up `entry` in the instance's export table and execute it with `args`.
+///
+/// The value stack, call frames, and control stack are reset before the call;
+/// linear memory and globals are **not** reset (they persist across calls on
+/// the same instance).  Returns the top of the value stack after execution.
+pub fn call_instance<'a>(
+    inst:  &mut Instance<'a>,
+    entry: &str,
+    args:  &[i32],
+) -> Result<Option<i64>, RunError> {
+    // Re-use load() for a cheap export-section scan (no code re-parsing).
+    let module   = load(inst.bytes).map_err(RunError::Load)?;
+    let func_idx = find_export(&module, entry)
+        .ok_or(RunError::EntryNotFound)? as usize;
+
+    inst.interp.reset_for_call();
+
     for &arg in args {
-        if interp.vsp >= interp.vstack.len() {
+        if inst.interp.vsp >= STACK_DEPTH {
             return Err(RunError::Interp(InterpError::StackOverflow));
         }
-        interp.vstack[interp.vsp] = arg as i64;
-        interp.vsp += 1;
+        inst.interp.vstack[inst.interp.vsp] = arg as i64;
+        inst.interp.vsp += 1;
     }
 
-    interp.call(func_idx).map_err(RunError::Interp)?;
-    Ok(interp.top())
+    inst.interp.call(func_idx).map_err(RunError::Interp)?;
+    Ok(inst.interp.top())
+}
+
+// ── Convenience wrapper ───────────────────────────────────────────────────────
+
+/// Instantiate `bytes`, call `entry` with `args`, and return the result.
+/// Equivalent to `instantiate` + `call_instance` with the kernel host functions.
+/// Each call produces a completely fresh instance (memory, globals reset).
+pub fn run(bytes: &[u8], entry: &str, args: &[i32]) -> Result<Option<i64>, RunError> {
+    let mut inst = instantiate(bytes, kernel_host)?;
+    call_instance(&mut inst, entry, args)
 }
 
 // ── Embedded userland modules ─────────────────────────────────────────────────
