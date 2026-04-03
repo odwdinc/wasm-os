@@ -48,7 +48,7 @@ pub const MAX_TYPES:      usize = 16;
 pub const MAX_LOCALS:     usize = 16;
 pub const MAX_CTRL_DEPTH: usize = 64; // total across all live call frames
 pub const STACK_DEPTH:    usize = 256;
-pub const CALL_DEPTH:     usize = 32;
+pub const CALL_DEPTH:     usize = 128;
 pub const MEM_SIZE:       usize = 4096;
 
 const NO_ELSE: usize = usize::MAX;
@@ -111,12 +111,10 @@ struct CtrlFrame {
     pc_start: usize,
     /// Position OF the matching `end` opcode in the body slice.
     end_pc:   usize,
-    /// Position OF the `else` opcode, or NO_ELSE.
-    else_pc:  usize,
 }
 
 const BLANK_CTRL: CtrlFrame = CtrlFrame {
-    kind: BlockKind::Block, pc_start: 0, end_pc: 0, else_pc: NO_ELSE,
+    kind: BlockKind::Block, pc_start: 0, end_pc: 0,
 };
 
 // ── Call-stack frame ──────────────────────────────────────────────────────────
@@ -281,11 +279,11 @@ impl<'a> Interpreter<'a> {
                     // Skip blocktype (single byte in MVP).
                     let pc_body = pc + 1;
                     self.frames[fi].pc = pc_body;
-                    let (end_pc, _else_pc) = scan_block_end(body, pc_body)
+                    let (end_pc, _) = scan_block_end(body, pc_body)
                         .ok_or(InterpError::MalformedCode)?;
                     self.ctrl_push(CtrlFrame {
                         kind: BlockKind::Block,
-                        pc_start: pc_body, end_pc, else_pc: NO_ELSE,
+                        pc_start: pc_body, end_pc,
                     })?;
                 }
 
@@ -296,11 +294,11 @@ impl<'a> Interpreter<'a> {
                     let body = self.bodies[self.frames[fi].body_idx];
                     let pc_body = pc + 1;
                     self.frames[fi].pc = pc_body;
-                    let (end_pc, _else_pc) = scan_block_end(body, pc_body)
+                    let (end_pc, _) = scan_block_end(body, pc_body)
                         .ok_or(InterpError::MalformedCode)?;
                     self.ctrl_push(CtrlFrame {
                         kind: BlockKind::Loop,
-                        pc_start: pc_body, end_pc, else_pc: NO_ELSE,
+                        pc_start: pc_body, end_pc,
                     })?;
                 }
 
@@ -318,13 +316,13 @@ impl<'a> Interpreter<'a> {
                         // Enter then-branch.
                         self.ctrl_push(CtrlFrame {
                             kind: BlockKind::If,
-                            pc_start: pc_body, end_pc, else_pc,
+                            pc_start: pc_body, end_pc,
                         })?;
                     } else if else_pc != NO_ELSE {
                         // Condition false, has else: jump to else body.
                         self.ctrl_push(CtrlFrame {
                             kind: BlockKind::If,
-                            pc_start: pc_body, end_pc, else_pc,
+                            pc_start: pc_body, end_pc,
                         })?;
                         self.frames[fi].pc = else_pc + 1;
                     } else {

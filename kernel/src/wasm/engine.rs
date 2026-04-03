@@ -26,8 +26,9 @@ impl RunError {
 
 // ── Host functions ────────────────────────────────────────────────────────────
 
-/// Kernel host dispatch.  Currently supports one import:
-///   index 0 — `print(ptr: i32, len: i32)`  writes UTF-8 from linear memory.
+/// Kernel host dispatch.
+///   index 0 — `print(ptr: i32, len: i32)`  write UTF-8 from linear memory
+///   index 1 — `print_int(n: i32)`           print decimal integer + newline
 fn kernel_host(
     func_idx: usize,
     vstack:   &mut [i32],
@@ -36,20 +37,48 @@ fn kernel_host(
 ) -> Result<(), InterpError> {
     match func_idx {
         0 => {
-            // print(ptr: i32, len: i32)
-            // WASM pushes ptr first, len second → len is on top.
+            // print(ptr: i32, len: i32) — len is on top.
             if *vsp < 2 { return Err(InterpError::StackUnderflow); }
             let len = vstack[*vsp - 1] as usize;
             let ptr = vstack[*vsp - 2] as usize;
             *vsp -= 2;
-
             let end = ptr.saturating_add(len).min(mem.len());
             if let Ok(s) = core::str::from_utf8(&mem[ptr..end]) {
                 crate::print!("{}", s);
             }
             Ok(())
         }
+        1 => {
+            // print_int(n: i32)
+            if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+            let n = vstack[*vsp - 1];
+            *vsp -= 1;
+            fmt_i32(n);
+            Ok(())
+        }
         _ => Err(InterpError::IsImport),
+    }
+}
+
+/// Print an i32 as decimal followed by a newline, without heap allocation.
+fn fmt_i32(n: i32) {
+    let mut buf = [0u8; 11]; // max 11 chars: "-2147483648"
+    let mut pos = buf.len();
+    let negative = n < 0;
+    // Use u32 arithmetic to handle i32::MIN correctly.
+    let mut val: u32 = if n == i32::MIN { 2147483648 } else if negative { (-n) as u32 } else { n as u32 };
+    if val == 0 {
+        crate::println!("0");
+        return;
+    }
+    while val > 0 {
+        pos -= 1;
+        buf[pos] = b'0' + (val % 10) as u8;
+        val /= 10;
+    }
+    if negative { pos -= 1; buf[pos] = b'-'; }
+    if let Ok(s) = core::str::from_utf8(&buf[pos..]) {
+        crate::println!("{}", s);
     }
 }
 
@@ -164,7 +193,7 @@ pub fn count_func_imports(import_section: Option<&[u8]>) -> usize {
 /// Parse `bytes` as a WASM binary, initialise linear memory from data segments,
 /// wire up host functions, look up `entry` in the export section, execute it,
 /// and return the top of the value stack (if any) after execution.
-pub fn run(bytes: &[u8], entry: &str) -> Result<Option<i32>, RunError> {
+pub fn run(bytes: &[u8], entry: &str, args: &[i32]) -> Result<Option<i32>, RunError> {
     let module       = load(bytes).map_err(RunError::Load)?;
     let import_count = count_func_imports(module.import_section);
 
@@ -182,144 +211,24 @@ pub fn run(bytes: &[u8], entry: &str) -> Result<Option<i32>, RunError> {
         }
     }
 
+    // Push caller-supplied arguments onto the value stack before the call.
+    for &arg in args {
+        if interp.vsp >= interp.vstack.len() {
+            return Err(RunError::Interp(InterpError::StackOverflow));
+        }
+        interp.vstack[interp.vsp] = arg;
+        interp.vsp += 1;
+    }
+
     interp.call(func_idx).map_err(RunError::Interp)?;
     Ok(interp.top_i32())
 }
 
-// ── Embedded test modules ─────────────────────────────────────────────────────
+// ── Embedded userland modules ─────────────────────────────────────────────────
 //
-// HELLO_WASM — WAT equivalent:
-//   (module
-//     (import "env" "print" (func (param i32 i32)))   ;; func 0 (import)
-//     (memory 1)
-//     (data (i32.const 0) "Hello from WASM!\n")        ;; 17 bytes at offset 0
-//     (func                                             ;; func 1 (defined)
-//       i32.const 0   ;; ptr
-//       i32.const 17  ;; len
-//       call 0)       ;; call print
-//     (export "main" (func 1))
-//   )
-//
-// To run: engine::run(HELLO_WASM, 1)
-pub const HELLO_WASM: &[u8] = &[
-    // ── header ──────────────────────────────────────────────────────────────
-    0x00, 0x61, 0x73, 0x6D,  // magic "\0asm"
-    0x01, 0x00, 0x00, 0x00,  // version 1
+// Source lives under userland/; run tools/wasm-pack.sh to compile .wat → .wasm
+// before building the kernel.
 
-    // ── type section (id=1, size=9) — 2 types ───────────────────────────────
-    0x01, 0x09,
-    0x02,                          // 2 types
-    0x60, 0x02, 0x7F, 0x7F, 0x00, // type 0: (i32 i32) -> ()  [print]
-    0x60, 0x00, 0x00,              // type 1: ()       -> ()  [main]
-
-    // ── import section (id=2, size=13) — "env"."print" func type 0 ──────────
-    0x02, 0x0D,
-    0x01,                                        // 1 import
-    0x03, 0x65, 0x6E, 0x76,                      // "env"
-    0x05, 0x70, 0x72, 0x69, 0x6E, 0x74,          // "print"
-    0x00, 0x00,                                  // func, type index 0
-
-    // ── function section (id=3, size=2) — 1 function, type 1 ─────────────────
-    0x03, 0x02,
-    0x01, 0x01,
-
-    // ── memory section (id=5, size=3) — 1 page minimum ───────────────────────
-    0x05, 0x03,
-    0x01, 0x00, 0x01,
-
-    // ── export section (id=7, size=8) — "main" → func 1 ─────────────────────
-    0x07, 0x08,
-    0x01,                          // 1 export
-    0x04, 0x6D, 0x61, 0x69, 0x6E, // "main"
-    0x00, 0x01,                    // kind=func, index=1
-
-    // ── code section (id=10, size=10) ────────────────────────────────────────
-    // body: 0 locals | i32.const 0 | i32.const 17 | call 0 | end
-    0x0A, 0x0A,
-    0x01,        // 1 body
-    0x08,        // body size = 8
-    0x00,        // 0 local groups
-    0x41, 0x00,  // i32.const 0   (ptr)
-    0x41, 0x11,  // i32.const 17  (len)
-    0x10, 0x00,  // call 0        (print)
-    0x0B,        // end
-
-    // ── data section (id=11, size=23) ────────────────────────────────────────
-    // active segment, mem 0, offset 0, "Hello from WASM!\n"
-    0x0B, 0x17,
-    0x01,              // 1 segment
-    0x00,              // kind = active mem-0
-    0x41, 0x00, 0x0B,  // offset: i32.const 0; end
-    0x11,              // 17 bytes
-    0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x20,  // "Hello "
-    0x66, 0x72, 0x6F, 0x6D, 0x20,        // "from "
-    0x57, 0x41, 0x53, 0x4D, 0x21, 0x0A,  // "WASM!\n"
-];
-
-// GREET_WASM — WAT equivalent:
-//   (module
-//     (import "env" "print" (func (param i32 i32)))   ;; func 0 (import)
-//     (memory 1)
-//     (data (i32.const 0) "Greetings from the second module!\n")  ;; 34 bytes
-//     (func                                             ;; func 1 (defined)
-//       i32.const 0   ;; ptr
-//       i32.const 34  ;; len
-//       call 0)       ;; call print
-//     (export "main" (func 1))
-//   )
-pub const GREET_WASM: &[u8] = &[
-    // ── header ──────────────────────────────────────────────────────────────
-    0x00, 0x61, 0x73, 0x6D,  // magic "\0asm"
-    0x01, 0x00, 0x00, 0x00,  // version 1
-
-    // ── type section (id=1, size=9) — 2 types ───────────────────────────────
-    0x01, 0x09,
-    0x02,
-    0x60, 0x02, 0x7F, 0x7F, 0x00, // type 0: (i32 i32) -> ()
-    0x60, 0x00, 0x00,              // type 1: ()       -> ()
-
-    // ── import section (id=2, size=13) ───────────────────────────────────────
-    0x02, 0x0D,
-    0x01,
-    0x03, 0x65, 0x6E, 0x76,                      // "env"
-    0x05, 0x70, 0x72, 0x69, 0x6E, 0x74,          // "print"
-    0x00, 0x00,
-
-    // ── function section (id=3, size=2) ──────────────────────────────────────
-    0x03, 0x02,
-    0x01, 0x01,
-
-    // ── memory section (id=5, size=3) ────────────────────────────────────────
-    0x05, 0x03,
-    0x01, 0x00, 0x01,
-
-    // ── export section (id=7, size=8) — "main" → func 1 ─────────────────────
-    0x07, 0x08,
-    0x01,
-    0x04, 0x6D, 0x61, 0x69, 0x6E, // "main"
-    0x00, 0x01,
-
-    // ── code section (id=10, size=10) ────────────────────────────────────────
-    // 0 locals | i32.const 0 | i32.const 34 | call 0 | end
-    0x0A, 0x0A,
-    0x01,        // 1 body
-    0x08,        // body size = 8
-    0x00,        // 0 local groups
-    0x41, 0x00,  // i32.const 0   (ptr)
-    0x41, 0x22,  // i32.const 34  (len)  — 34 = 0x22
-    0x10, 0x00,  // call 0        (print)
-    0x0B,        // end
-
-    // ── data section (id=11, size=40) ────────────────────────────────────────
-    // active segment, mem 0, offset 0, "Greetings from the second module!\n"
-    0x0B, 0x28,
-    0x01,              // 1 segment
-    0x00,              // kind = active mem-0
-    0x41, 0x00, 0x0B,  // offset: i32.const 0; end
-    0x22,              // 34 bytes
-    0x47, 0x72, 0x65, 0x65, 0x74, 0x69, 0x6E, 0x67, 0x73, 0x20,  // "Greetings "
-    0x66, 0x72, 0x6F, 0x6D, 0x20,                                  // "from "
-    0x74, 0x68, 0x65, 0x20,                                        // "the "
-    0x73, 0x65, 0x63, 0x6F, 0x6E, 0x64, 0x20,                    // "second "
-    0x6D, 0x6F, 0x64, 0x75, 0x6C, 0x65, 0x21, 0x0A,              // "module!\n"
-];
+pub const HELLO_WASM: &[u8] = include_bytes!("../../../userland/hello/hello.wasm");
+pub const GREET_WASM: &[u8] = include_bytes!("../../../userland/greet/greet.wasm");
+pub const FIB_WASM:   &[u8] = include_bytes!("../../../userland/fib/fib.wasm");

@@ -9,7 +9,6 @@ const HISTORY_LEN: usize = 16;
 
 #[derive(Debug, PartialEq)]
 pub enum ShellError {
-    UnknownCommand,
     TooManyArgs,
 }
 
@@ -66,7 +65,7 @@ pub fn run_command(line: &str) {
     }
 
     // Safety: single-core, no interrupts mutating HISTORY concurrently.
-    unsafe { HISTORY.push(line); }
+    unsafe { (*core::ptr::addr_of_mut!(HISTORY)).push(line); }
 
     let mut argv = [""; MAX_ARGS];
     let argc = match tokenize(line, &mut argv) {
@@ -82,7 +81,7 @@ pub fn run_command(line: &str) {
         "clear"   => cmd_clear(),
         "ls"      => cmd_ls(),
         "info"    => cmd_info(argv.get(1).copied().unwrap_or("")),
-        "run"     => cmd_run(argv.get(1).copied().unwrap_or("")),
+        "run"     => cmd_run(&argv[1..argc]),
         _         => { crate::println!("unknown command: {}", argv[0]); }
     }
 }
@@ -142,7 +141,7 @@ fn cmd_echo(args: &[&str]) {
 }
 
 fn cmd_history() {
-    let hist = unsafe { &HISTORY };
+    let hist = unsafe { &*core::ptr::addr_of!(HISTORY) };
     for i in 0..hist.len {
         crate::println!("{:>4}  {}", i + 1, hist.get(i));
     }
@@ -190,17 +189,41 @@ fn cmd_info(name: &str) {
     crate::println!("exports: {}", export_count);
 }
 
-fn cmd_run(name: &str) {
-    if name.is_empty() {
-        crate::println!("usage: run <name>");
-        return;
-    }
+fn cmd_run(argv: &[&str]) {
+    let name = match argv.first() {
+        Some(n) if !n.is_empty() => *n,
+        _ => { crate::println!("usage: run <name> [args...]"); return; }
+    };
     let data = match crate::fs::find_file(name) {
         Some(d) => d,
         None    => { crate::println!("not found: {}", name); return; }
     };
-    match crate::wasm::engine::run(data, "main") {
+    // Parse optional integer arguments.
+    let mut wasm_args = [0i32; 8];
+    let mut arg_count = 0usize;
+    for s in &argv[1..] {
+        if arg_count >= 8 { break; }
+        match parse_i32(s) {
+            Some(n) => { wasm_args[arg_count] = n; arg_count += 1; }
+            None    => { crate::println!("invalid arg: {}", s); return; }
+        }
+    }
+    match crate::wasm::engine::run(data, "main", &wasm_args[..arg_count]) {
         Ok(_)  => {}
         Err(e) => { crate::println!("error: {}", e.as_str()); }
     }
+}
+
+/// Parse a decimal integer string into i32. Returns None on invalid input.
+fn parse_i32(s: &str) -> Option<i32> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() { return None; }
+    let (negative, start) = if bytes[0] == b'-' { (true, 1) } else { (false, 0) };
+    if start >= bytes.len() { return None; }
+    let mut val = 0i32;
+    for &b in &bytes[start..] {
+        if b < b'0' || b > b'9' { return None; }
+        val = val.checked_mul(10)?.checked_add((b - b'0') as i32)?;
+    }
+    Some(if negative { -val } else { val })
 }

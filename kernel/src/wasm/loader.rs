@@ -6,12 +6,7 @@
 pub const SECTION_TYPE:     u8 = 1;
 pub const SECTION_IMPORT:   u8 = 2;
 pub const SECTION_FUNCTION: u8 = 3;
-pub const SECTION_TABLE:    u8 = 4;
-pub const SECTION_MEMORY:   u8 = 5;
-pub const SECTION_GLOBAL:   u8 = 6;
 pub const SECTION_EXPORT:   u8 = 7;
-pub const SECTION_START:    u8 = 8;
-pub const SECTION_ELEMENT:  u8 = 9;
 pub const SECTION_CODE:     u8 = 10;
 pub const SECTION_DATA:     u8 = 11;
 
@@ -110,7 +105,7 @@ pub fn find_export(module: &Module, name: &str) -> Option<u32> {
 // ── Main entry point ─────────────────────────────────────────────────────────
 /// Parse `bytes` as a WASM binary.
 /// On success returns a `Module` whose slices reference `bytes` directly.
-pub fn load(bytes: &[u8]) -> Result<Module, LoadError> {
+pub fn load(bytes: &[u8]) -> Result<Module<'_>, LoadError> {
     // ── 1. Header ──
     if bytes.len() < 8 {
         return Err(LoadError::TooShort);

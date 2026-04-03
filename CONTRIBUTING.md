@@ -24,26 +24,37 @@ Expect things to evolve.
 
 ## 1. Prerequisites
 
-* Rust (nightly recommended)
-* `x86_64-unknown-none` target
-* QEMU
+* Rust nightly (see `rust-toolchain.toml` — toolchain is pinned)
+* `x86_64-unknown-none` target: `rustup target add x86_64-unknown-none`
+* `wabt` (for `wat2wasm`): `sudo apt install wabt`
+* QEMU: `sudo apt install qemu-system-x86`
 
 ---
 
 ## 2. Build & Run
 
 ```bash
-cargo build
-cargo run
+# Full pipeline: compile userland .wat → build kernel → launch QEMU
+./tools/run-qemu.sh
+
+# Or step by step:
+./tools/wasm-pack.sh      # compile userland/*.wat → *.wasm  (requires wabt)
+./tools/build-image.sh    # build kernel ELF + disk image
+./tools/run-qemu.sh       # boot in QEMU
 ```
 
 You should see:
 
 ```text
+Hello from WASM!
+Type ‘help’ for commands.
 > _
 ```
 
 If it boots and you can type, you’re ready.
+
+> **Note:** Run `wasm-pack.sh` before building the kernel if you change any `.wat` files.
+> The `.wasm` binaries are embedded at compile time via `include_bytes!`.
 
 ---
 
@@ -60,14 +71,16 @@ Before contributing:
 
 ## Step 1: Pick a Task
 
-Good starting points:
+Good starting points (Sprint A):
 
-* Terminal improvements
-* Small WASM instruction support
-* Bug fixes
-* Logging/debugging improvements
+* `i64` type support
+* `i32.div_s`, `i32.rem_s`, `i32.shr_u`
+* `memory.size` / `memory.grow`
+* `br_table`
+* Global variables (section ID 6)
+* Bug fixes, error message improvements
 
-If unsure, open a discussion or ask.
+See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for full task breakdown.
 
 ---
 
@@ -219,10 +232,10 @@ When opening an issue, include:
 
 If you’re new, try:
 
-* Add a simple shell command (`clear`, `pwd`, etc.)
-* Improve error messages
-* Add logging to runtime execution
-* Implement a small WASM opcode
+* Implement a missing i32 opcode (`i32.div_s`, `i32.rem_s`, `i32.shr_u`)
+* Add `memory.size` returning the current page count
+* Improve WASM error messages (show the bad opcode byte)
+* Add a new shell command (e.g. `cat <name>` to hex-dump a registered file)
 
 ---
 

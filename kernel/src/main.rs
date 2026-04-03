@@ -55,9 +55,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // Sprint 3.1: register embedded modules into the in-memory FS.
     fs::register_file("hello.wasm", wasm::engine::HELLO_WASM);
     fs::register_file("greet.wasm", wasm::engine::GREET_WASM);
+    fs::register_file("fib.wasm",   wasm::engine::FIB_WASM);
 
     // Sprint 2.5: auto-run the embedded WASM module on boot.
-    if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, "main") {
+    if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, "main", &[]) {
         println!("wasm boot error: {}", e.as_str());
     }
 

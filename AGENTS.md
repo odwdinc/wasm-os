@@ -1,477 +1,179 @@
-# AGENTS.md
+# AGENTS.md — WASM-First OS
 
-<p align="center">
-  <strong>WASM-First Bare Metal OS</strong><br/>
-  <em>Minimal kernel. WebAssembly as the system ABI.</em>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/status-MVP-blue" />
-  <img src="https://img.shields.io/badge/runtime-WASM-green" />
-  <img src="https://img.shields.io/badge/language-Rust-orange" />
-  <img src="https://img.shields.io/badge/platform-x86__64-lightgrey" />
-</p>
-
+> Bare-metal Rust kernel. WebAssembly as the system ABI. MVP complete.
 
 ---
 
-├── Cargo.toml                # Workspace root
-├── rust-toolchain.toml       # Pin nightly toolchain
+## Project Status
+
+**MVP is done.** The system boots, runs a shell, and executes real WASM modules.
+Next work begins at [Sprint A](Post_MVP_Agile_plan.md).
+
+---
+
+## Actual Source Layout
+
+```
+/
+├── Cargo.toml                   # Workspace root (kernel, runtime, shell, fs, shared)
+├── rust-toolchain.toml          # Pinned nightly toolchain
 ├── README.md
-├── AGENTS.md
+├── AGENTS.md                    # This file
 ├── CONTRIBUTING.md
-├── LICENSE (optional)
+├── MVP_Agile_plan.md            # Sprints 1–4 (complete)
+├── Post_MVP_Agile_plan.md       # Sprints A–G (next)
 │
-├── /kernel                   # Bare metal kernel (no_std)
-│   ├── Cargo.toml
+├── kernel/                      # The entire working system lives here
 │   └── src/
-│       ├── main.rs           # Entry point
-│       ├── boot.rs           # Boot/init logic
-│       ├── memory/
-│       │   ├── mod.rs
-│       │   ├── allocator.rs
-│       │   └── paging.rs
-│       ├── interrupts/
-│       │   ├── mod.rs
-│       │   ├── idt.rs
-│       │   └── handlers.rs
-│       ├── drivers/
-│       │   ├── mod.rs
-│       │   ├── vga.rs        # Text output
-│       │   └── keyboard.rs   # Input
-│       └── util/
-│           └── mod.rs
+│       ├── main.rs              # Entry point, boot sequence, file registration
+│       ├── vga.rs               # Framebuffer writer, 8×8 font, scrolling
+│       ├── keyboard.rs          # PS/2 interrupt handler, scancode decoder
+│       ├── shell.rs             # REPL, command dispatch, history, tokenizer
+│       ├── fs.rs                # In-memory file table (register_file, find_file)
+│       ├── drivers/             # Hardware driver stubs (future expansion)
+│       ├── interrupts/          # IDT setup and handlers
+│       ├── memory/              # Memory management stubs
+│       └── wasm/
+│           ├── mod.rs           # Module re-exports
+│           ├── loader.rs        # WASM binary parser (sections → Module struct)
+│           ├── engine.rs        # run(), host functions (print, print_int)
+│           └── interp.rs        # Interpreter loop, all opcodes, control stack
 │
-├── /runtime                  # WASM runtime (core of system)
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs
-│       ├── module.rs         # WASM module loader
-│       ├── interpreter.rs    # Execution loop
-│       ├── stack.rs
-│       ├── memory.rs         # Linear memory model
-│       ├── instructions/
-│       │   ├── mod.rs
-│       │   ├── control.rs
-│       │   ├── numeric.rs
-│       │   └── memory.rs
-│       └── host/
-│           ├── mod.rs
-│           ├── api.rs        # Host function definitions
-│           └── bindings.rs   # Glue to kernel
+├── runner/                      # Host-side tool: wraps kernel ELF → BIOS disk image
+│   └── src/main.rs              # Uses bootloader crate
 │
-├── /shell                    # Terminal + command system
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs
-│       ├── shell.rs          # REPL loop
-│       ├── parser.rs         # Command parsing
-│       ├── commands/
-│       │   ├── mod.rs
-│       │   ├── help.rs
-│       │   ├── echo.rs
-│       │   ├── ls.rs
-│       │   ├── cat.rs
-│       │   └── run.rs        # Execute WASM
-│       └── input.rs          # Line editing
+├── userland/                    # WASM source modules
+│   ├── hello/hello.wat          # Prints "Hello from WASM!\n"
+│   ├── greet/greet.wat          # Prints "Greetings from the second module!\n"
+│   └── fib/fib.wat              # Recursive fibonacci: run fib.wasm <n>
 │
-├── /fs                       # Filesystem layer
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs
-│       ├── fs.rs             # Core FS logic
-│       ├── file.rs
-│       ├── directory.rs
-│       └── ramfs.rs          # In-memory FS (MVP)
+├── tools/
+│   ├── wasm-pack.sh             # Step 1: compile userland/*.wat → *.wasm
+│   ├── build-image.sh           # Step 2: wasm-pack + cargo build + disk image
+│   └── run-qemu.sh              # Step 3: build-image + launch QEMU
 │
-├── /shared                   # Shared types/interfaces
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs
-│       ├── error.rs
-│       ├── types.rs
-│       └── constants.rs
+├── docs/
+│   ├── architecture.md          # System design details
+│   ├── wasm-runtime.md          # Interpreter internals
+│   └── roadmap.md               # Sprint-by-sprint plan
 │
-├── /userland                 # Example WASM programs
-│   ├── hello/
-│   │   ├── hello.wat
-│   │   └── build.sh
-│   └── README.md
-│
-├── /tools                    # Dev + build tooling
-│   ├── build-image.sh
-│   ├── run-qemu.sh
-│   └── wasm-pack.sh
-│
-├── /scripts                  # Helper scripts
-│   ├── setup.sh
-│   └── dev-env.sh
-│
-├── /docs                     # Design docs
-│   ├── architecture.md
-│   ├── wasm-runtime.md
-│   └── roadmap.md
-│
-└── /tests                    # Host-side tests (std)
-    ├── runtime_tests.rs
-    └── fs_tests.rs
-
----
-
-# 🧠 Overview
-
-This project is a **research operating system** that runs **WebAssembly (WASM) as the primary execution environment on bare metal**.
-
-Instead of traditional OS design:
-
-* ❌ No userland binaries
-* ❌ No POSIX/syscall model
-* ❌ No strict ring3 abstraction boundary
-
-We use:
-
-* ✅ WASM modules as the unit of execution
-* ✅ VM-based isolation (memory-safe sandboxing)
-* ✅ Host function interfaces instead of syscalls
-
----
-
-# 🎯 Goals
-
-## Near-Term (MVP+)
-
-* Stable WASM interpreter
-* File-based module loading
-* Expand host function interface
-* Improve terminal UX
-
-## Mid-Term
-
-* Capability-based security model
-* Persistent filesystem
-* Multi-module execution
-* Async I/O model
-
-## Long-Term
-
-* JIT compilation
-* Self-hosted toolchain
-* Networking stack
-* WASM-driven GUI
-
----
-
-# 🏗️ Architecture
-
-## Layered Design
-
-### 1. Kernel (`no_std`, Rust)
-
-Handles:
-
-* Boot & initialization
-* Memory management
-* Interrupts
-* Basic device I/O
-
-Constraints:
-
-* Minimal surface area
-* Deterministic behavior preferred
-* Unsafe code must be documented
-
----
-
-### 2. Terminal / Shell
-
-Responsibilities:
-
-* Text rendering
-* Input handling
-* Command parsing
-* Launching WASM modules
-
-Example:
-
-```
-> ls
-> run hello.wasm
+└── shared/, runtime/, shell/, fs/   # Empty workspace crates (reserved for Sprint B+)
 ```
 
 ---
 
-### 3. WASM Runtime
+## What Is Actually Built
 
-Current:
+### Kernel (`kernel/src/`)
 
-* Minimal interpreter
+| File | What it does |
+|---|---|
+| `main.rs` | Bootloader entry, framebuffer init, file registration, keyboard loop |
+| `vga.rs` | Framebuffer text output, scrolling, 8×8 bitmap font, `clear_screen()` |
+| `keyboard.rs` | PS/2 interrupt handler, scancode → char, line buffering |
+| `shell.rs` | Tokenizer, command dispatch: `help echo history clear ls info run` |
+| `fs.rs` | `[Option<File>; 16]` table, `register_file` / `find_file` / `for_each_file` |
 
-Responsibilities:
+### WASM Subsystem (`kernel/src/wasm/`)
 
-* Load + validate modules
-* Execute instructions
-* Interface with host functions
+| File | What it does |
+|---|---|
+| `loader.rs` | Parses WASM binary sections into zero-copy `Module<'_>` slices; `find_export` |
+| `engine.rs` | `run(bytes, entry, args)`, data section init, host function dispatch |
+| `interp.rs` | Stack machine interpreter — see opcode table below |
 
-Planned:
+### Supported Opcodes
 
-* Broader spec support
-* Optional JIT
+| Category | Opcodes |
+|---|---|
+| Control | `nop` `unreachable` `block` `loop` `if/else/end` `br` `br_if` `return` |
+| Calls | `call` (imports → host dispatch, defined → push frame with params) |
+| Locals | `local.get` `local.set` `local.tee` |
+| i32 arithmetic | `add` `sub` `mul` `and` `or` `xor` `shl` `shr_s` |
+| i32 comparison | `eq` `ne` `lt_s` `gt_s` `le_s` `ge_s` `eqz` |
+| Memory | `i32.load` `i32.store` `i32.load8_u` `i32.store8` |
+| Stack | `drop` `select` `i32.const` |
 
----
+### Host Functions
 
-### 4. Host Interface (Syscall Replacement)
-
-All system interaction happens via imports.
-
-Example:
-
-```wat
-(import "os" "print" (func $print (param i32 i32)))
-```
-
-Rules:
-
-* No implicit access
-* Capabilities must be explicitly provided
-* Keep APIs minimal and composable
-
----
-
-### 5. Filesystem
-
-Current:
-
-* In-memory
-
-Planned:
-
-* Persistent disk-backed FS
-
-Responsibilities:
-
-* Store `.wasm` modules
-* Provide file APIs to runtime
+| Index | Import | Signature | Behaviour |
+|---|---|---|---|
+| 0 | `"env"."print"` | `(param i32 i32)` | Print UTF-8 from linear memory (ptr, len) |
+| 1 | `"env"."print_int"` | `(param i32)` | Print i32 as decimal + newline |
 
 ---
 
-# 🚀 Getting Started
-
-## Requirements
-
-* Rust (nightly recommended)
-* `x86_64-unknown-none` target
-* QEMU
-
----
-
-## Build & Run
+## Build Pipeline
 
 ```bash
-# build
-cargo build
-
-# run in qemu
-cargo run
+./tools/run-qemu.sh          # full pipeline
+./tools/build-image.sh       # wasm-pack + kernel build + disk image only
+./tools/wasm-pack.sh         # compile userland .wat → .wasm only
 ```
 
-Expected:
+The `.wasm` files are embedded into the kernel binary via `include_bytes!` at compile time.
+**Run `wasm-pack.sh` before building the kernel** if you change any `.wat` files.
 
+---
+
+## Adding a New WASM Module
+
+1. Create `userland/<name>/<name>.wat`
+2. Import host functions and export `main`
+3. Run `tools/wasm-pack.sh`
+4. Register in `kernel/src/main.rs`:
+   ```rust
+   fs::register_file("<name>.wasm", wasm::engine::<NAME>_WASM);
+   ```
+5. Add `include_bytes!` constant in `kernel/src/wasm/engine.rs`
+
+---
+
+## Adding a Host Function
+
+1. Add a new `match` arm in `kernel_host()` in `engine.rs` (next available index)
+2. Document it in `AGENTS.md` host function table
+3. Update any `.wat` modules that use it
+
+---
+
+## Development Rules
+
+1. **System must always boot** — never merge if QEMU doesn't boot
+2. **Terminal must remain functional** — input/output always works
+3. **No heap** — all data structures are fixed-size arrays; no `alloc`
+4. **Kernel stack budget** — `Interpreter` is stack-allocated (~11KB); keep stack use under 200KB
+5. Prefer small, incremental changes
+6. Document all `unsafe` blocks
+
+---
+
+## Agent Task Strategy
+
+When implementing a sprint task:
+
+1. Read the relevant source files before writing anything
+2. Identify the minimal change — don't expand scope
+3. Keep all fixed-size limits conservative (increase only if a test fails)
+4. Verify the system still boots after changes
+5. Update this file and `README.md` if the public interface changes
+
+---
+
+## Next Work (Sprint A)
+
+See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for full task breakdown.
+
+Priority tasks:
+- `i64` type support (extend value stack to tagged union)
+- `memory.size` / `memory.grow`
+- `i32.rem_s`, `i32.rem_u`, `i32.div_s`, `i32.div_u`
+- `br_table`
+- Global variables (section ID 6)
+- `call_indirect` + table section
+
+Done condition for Sprint A:
 ```
-> _
+> run primes.wasm
+Primes up to 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47
 ```
-
----
-
-# 🧩 Contribution Guide
-
-## Areas You Can Work On
-
-### 🔹 Kernel
-
-* Memory allocator
-* Interrupt handling
-* Device drivers
-
-### 🔹 WASM Runtime
-
-* Instruction support
-* Execution engine
-* Memory correctness
-
-### 🔹 Host Interface
-
-* API design
-* Capability model
-* Safety boundaries
-
-### 🔹 Filesystem
-
-* Data structures
-* Persistence layer
-* File APIs
-
-### 🔹 Tooling
-
-* Build pipeline
-* Debugging tools
-* Dev UX improvements
-
----
-
-# ⚙️ Development Rules
-
-1. **System must always boot**
-2. **Terminal must remain functional**
-3. Prefer **small, incremental PRs**
-4. Avoid unnecessary dependencies
-5. Keep abstractions minimal
-
----
-
-# 🧪 Testing
-
-## Required
-
-* Boots in QEMU
-* Terminal accepts input
-* Existing commands work
-* WASM execution still functions
-
-## Recommended
-
-* Unit tests (outside kernel)
-* Serial logging for debugging
-
----
-
-# 🧱 Coding Standards
-
-## Rust
-
-* `#![no_std]` in kernel
-* Minimize `unsafe`
-* Document all unsafe blocks
-
-## Style
-
-* Explicit naming
-* Small functions
-* Avoid hidden globals
-
----
-
-# 🤖 AI Agent Guidelines
-
-This repo is designed to be AI-contributor-friendly.
-
----
-
-## ✅ Allowed
-
-* Implement small, well-scoped features
-* Add WASM instructions
-* Improve error handling
-* Refactor for clarity
-* Add tests
-
----
-
-## ❌ Not Allowed
-
-* Large architectural rewrites without discussion
-* Breaking boot or terminal
-* Introducing heavy dependencies
-* Changing ABI without documentation
-
----
-
-## 🧭 Task Strategy (For Agents)
-
-1. Identify target layer:
-
-   * kernel / runtime / FS / shell
-2. Limit scope strictly
-3. Implement minimal working version
-4. Validate via QEMU
-5. Leave TODOs instead of overbuilding
-
----
-
-## 📣 Communication Expectations
-
-Agents should:
-
-* Explain tradeoffs briefly
-* Highlight unsafe code
-* Note performance implications
-* Avoid speculative complexity
-
----
-
-# 🗺️ Roadmap
-
-## Phase 1 (Current)
-
-* Boot → terminal
-* WASM execution (basic)
-
-## Phase 2
-
-* Filesystem integration
-* Runtime expansion
-
-## Phase 3
-
-* Capability system
-* Async execution
-
-## Phase 4
-
-* JIT + performance work
-* Self-hosting exploration
-
----
-
-# 💡 Philosophy
-
-This is an **experimental systems project**.
-
-We are not trying to:
-
-* replicate Linux
-* support POSIX
-* maximize compatibility
-
-We are trying to:
-
-* rethink OS boundaries
-* simplify execution models
-* explore WASM as a system interface
-
----
-
-# ✅ Definition of Done (MVP)
-
-* Boot to terminal
-* Accept input
-* Load `.wasm`
-* Execute module
-* Print output
-
----
-
-# 🤝 Contributing
-
-1. Fork the repo
-2. Create a branch
-3. Make small, focused changes
-4. Test in QEMU
-5. Open a PR
-
----
-
-# 📌 Final Principle
-
-> Working systems > perfect designs
-
-Iterate quickly. Keep it bootable. Build upward.

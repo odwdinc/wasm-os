@@ -287,8 +287,8 @@ not just hand-assembled bytes. This is what makes the runtime generally useful.
 
 ### 5. Validation
 
-* [ ] Reject unknown section IDs gracefully (skip with logged warning)
-* [ ] Enforce stack underflow detection on all pop operations
+* [x] Reject unknown section IDs gracefully (skip with logged warning)
+* [x] Enforce stack underflow detection on all pop operations
 
 ---
 
