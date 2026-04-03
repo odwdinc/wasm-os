@@ -72,7 +72,7 @@ can execute without hitting unsupported opcode errors.
 * [x] Parse global section (section ID 6)
 * [x] Store globals in `Interpreter` (fixed-size array)
 * [x] `global.get`, `global.set`
-* [ ] Mutable vs immutable globals (validate on set)
+* [x] Mutable vs immutable globals (validate on set)
 
 ---
 

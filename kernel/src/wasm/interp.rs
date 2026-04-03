@@ -122,6 +122,7 @@ pub enum InterpError {
     FuncIndexOutOfRange,
     LocalIndexOutOfRange,
     GlobalIndexOutOfRange,
+    GlobalImmutable,
     IsImport,
     Unreachable,
     StackOverflow,
@@ -145,6 +146,7 @@ impl InterpError {
             Self::FuncIndexOutOfRange   => "function index out of range",
             Self::LocalIndexOutOfRange  => "local variable index out of range",
             Self::GlobalIndexOutOfRange => "global variable index out of range",
+            Self::GlobalImmutable       => "write to immutable global",
             Self::IsImport              => "call to import (not yet supported)",
             Self::Unreachable           => "unreachable executed",
             Self::StackOverflow         => "value stack overflow",
@@ -221,8 +223,9 @@ pub struct Interpreter<'a> {
     ctrl:       [CtrlFrame; MAX_CTRL_DEPTH],
     ctrl_depth: usize,
 
-    globals:      [i64; MAX_GLOBALS],
-    global_count: usize,
+    globals:         [i64; MAX_GLOBALS],
+    global_mutable:  [bool; MAX_GLOBALS],
+    global_count:    usize,
 
     pub mem:     [u8; MEM_SIZE],
     pub host_fn: HostFn,
@@ -246,9 +249,10 @@ impl<'a> Interpreter<'a> {
         let mut local_counts = [0usize; MAX_FUNCS];
         let body_count = parse_code_section(code_bytes, &mut bodies, &mut local_counts)?;
 
-        let mut globals = [0i64; MAX_GLOBALS];
+        let mut globals        = [0i64; MAX_GLOBALS];
+        let mut global_mutable = [false; MAX_GLOBALS];
         let global_count = if let Some(gb) = module.global_section {
-            parse_global_section(gb, &mut globals)?
+            parse_global_section(gb, &mut globals, &mut global_mutable)?
         } else { 0 };
 
         Ok(Self {
@@ -258,7 +262,7 @@ impl<'a> Interpreter<'a> {
             vstack: [0i64; STACK_DEPTH], vsp: 0,
             frames: [BLANK_FRAME; CALL_DEPTH], fdepth: 0,
             ctrl: [BLANK_CTRL; MAX_CTRL_DEPTH], ctrl_depth: 0,
-            globals, global_count,
+            globals, global_mutable, global_count,
             mem: [0u8; MEM_SIZE],
             host_fn: default_host,
         })
@@ -554,6 +558,7 @@ impl<'a> Interpreter<'a> {
                     self.frames[fi].pc += consumed;
                     let idx = idx as usize;
                     if idx >= self.global_count { return Err(InterpError::GlobalIndexOutOfRange); }
+                    if !self.global_mutable[idx] { return Err(InterpError::GlobalImmutable); }
                     self.globals[idx] = self.v_pop()?;
                 }
 
@@ -994,7 +999,11 @@ fn parse_code_section<'a>(
     Ok(count)
 }
 
-fn parse_global_section(bytes: &[u8], out: &mut [i64; MAX_GLOBALS]) -> Result<usize, InterpError> {
+fn parse_global_section(
+    bytes:       &[u8],
+    vals:        &mut [i64; MAX_GLOBALS],
+    mutability:  &mut [bool; MAX_GLOBALS],
+) -> Result<usize, InterpError> {
     let mut cur = 0usize;
     let (count, n) = read_u32_leb128(bytes).ok_or(InterpError::MalformedCode)?;
     cur += n;
@@ -1002,9 +1011,11 @@ fn parse_global_section(bytes: &[u8], out: &mut [i64; MAX_GLOBALS]) -> Result<us
     if count > MAX_GLOBALS { return Err(InterpError::TooManyGlobals); }
 
     for i in 0..count {
-        // valtype (1 byte) + mutability (1 byte)
+        // valtype (1 byte) + mutability flag (1 byte: 0x00=const, 0x01=var)
         if cur + 2 > bytes.len() { return Err(InterpError::MalformedCode); }
-        cur += 2;
+        cur += 1; // skip valtype
+        mutability[i] = bytes[cur] == 0x01;
+        cur += 1;
         // Init expression: i32.const or i64.const, then end (0x0B)
         if cur >= bytes.len() { return Err(InterpError::MalformedCode); }
         let init_op = bytes[cur]; cur += 1;
@@ -1023,7 +1034,7 @@ fn parse_global_section(bytes: &[u8], out: &mut [i64; MAX_GLOBALS]) -> Result<us
         };
         if cur >= bytes.len() || bytes[cur] != 0x0B { return Err(InterpError::MalformedCode); }
         cur += 1;
-        out[i] = val;
+        vals[i] = val;
     }
     Ok(count)
 }
