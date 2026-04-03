@@ -17,6 +17,7 @@ const OP_BR_IF:         u8 = 0x0D;
 const OP_BR_TABLE:      u8 = 0x0E;
 const OP_RETURN:        u8 = 0x0F;
 const OP_CALL:          u8 = 0x10;
+const OP_CALL_INDIRECT: u8 = 0x11;
 const OP_DROP:          u8 = 0x1A;
 const OP_SELECT:        u8 = 0x1B;
 const OP_LOCAL_GET:     u8 = 0x20;
@@ -97,6 +98,9 @@ pub const MAX_FUNCS:      usize = 32;
 pub const MAX_TYPES:      usize = 16;
 pub const MAX_LOCALS:     usize = 16;
 pub const MAX_GLOBALS:    usize = 32;
+pub const MAX_TABLE:      usize = 256;
+
+const NULL_FUNC: u32 = u32::MAX; // sentinel for an uninitialised table entry
 pub const MAX_CTRL_DEPTH: usize = 64; // total across all live call frames
 pub const STACK_DEPTH:    usize = 256;
 pub const CALL_DEPTH:     usize = 128;
@@ -123,6 +127,8 @@ pub enum InterpError {
     LocalIndexOutOfRange,
     GlobalIndexOutOfRange,
     GlobalImmutable,
+    IndirectCallNull,
+    IndirectCallTypeMismatch,
     IsImport,
     Unreachable,
     StackOverflow,
@@ -146,7 +152,9 @@ impl InterpError {
             Self::FuncIndexOutOfRange   => "function index out of range",
             Self::LocalIndexOutOfRange  => "local variable index out of range",
             Self::GlobalIndexOutOfRange => "global variable index out of range",
-            Self::GlobalImmutable       => "write to immutable global",
+            Self::GlobalImmutable          => "write to immutable global",
+            Self::IndirectCallNull         => "call_indirect: null table entry",
+            Self::IndirectCallTypeMismatch => "call_indirect: type mismatch",
             Self::IsImport              => "call to import (not yet supported)",
             Self::Unreachable           => "unreachable executed",
             Self::StackOverflow         => "value stack overflow",
@@ -212,7 +220,14 @@ pub struct Interpreter<'a> {
     type_result_counts: [usize; MAX_TYPES],
     type_count:         usize,
     func_type_indices:  [usize; MAX_FUNCS],
+    /// Flat type-index table for ALL functions: imports first, then defined.
+    /// Indexed by absolute function index.
+    all_func_types:     [usize; MAX_FUNCS],
     pub import_count:   usize,
+
+    /// Function reference table (populated from the element section).
+    table:      [u32; MAX_TABLE],
+    table_size: usize,
 
     pub vstack: [i64; STACK_DEPTH],
     pub vsp:    usize,
@@ -255,14 +270,34 @@ impl<'a> Interpreter<'a> {
             parse_global_section(gb, &mut globals, &mut global_mutable)?
         } else { 0 };
 
+        // Build all_func_types: type index for every function (imports then defined).
+        let mut all_func_types = [0usize; MAX_FUNCS];
+        if let Some(ib) = module.import_section {
+            parse_import_func_types(ib, &mut all_func_types)?;
+        }
+        for i in 0..body_count {
+            let abs = import_count + i;
+            if abs < MAX_FUNCS { all_func_types[abs] = func_type_indices[i]; }
+        }
+
+        // Populate function table from element section.
+        let mut table      = [NULL_FUNC; MAX_TABLE];
+        let mut table_size = 0usize;
+        if let Some(eb) = module.element_section {
+            parse_element_section(eb, &mut table, &mut table_size)?;
+        }
+
         Ok(Self {
             bodies, body_count, local_counts,
             type_param_counts, type_result_counts, type_count, func_type_indices,
+            all_func_types,
             import_count,
+            table, table_size,
             vstack: [0i64; STACK_DEPTH], vsp: 0,
             frames: [BLANK_FRAME; CALL_DEPTH], fdepth: 0,
             ctrl: [BLANK_CTRL; MAX_CTRL_DEPTH], ctrl_depth: 0,
             globals, global_mutable, global_count,
+
             mem: [0u8; MEM_SIZE],
             host_fn: default_host,
         })
@@ -784,6 +819,39 @@ impl<'a> Interpreter<'a> {
                     }
                 }
 
+                // ── call_indirect <type_idx> <table_idx> ──────────────────────
+                OP_CALL_INDIRECT => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (expected_type, n1) = read_u32_leb128(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    let (_table_idx, n2) = read_u32_leb128(&body[pc + n1..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += n1 + n2;
+
+                    let i = self.v_pop()? as u32 as usize;
+                    if i >= self.table_size || self.table[i] == NULL_FUNC {
+                        return Err(InterpError::IndirectCallNull);
+                    }
+                    let callee = self.table[i] as usize;
+
+                    // Runtime type check.
+                    let actual_type = if callee < MAX_FUNCS { self.all_func_types[callee] } else { usize::MAX };
+                    if actual_type != expected_type as usize {
+                        return Err(InterpError::IndirectCallTypeMismatch);
+                    }
+
+                    if callee < self.import_count {
+                        let host = self.host_fn;
+                        host(callee, &mut self.vstack, &mut self.vsp, &mut self.mem)?;
+                    } else {
+                        let body_idx = callee - self.import_count;
+                        if body_idx >= self.body_count { return Err(InterpError::FuncIndexOutOfRange); }
+                        self.push_frame(body_idx)?;
+                    }
+                }
+
                 other => return Err(InterpError::UnknownOpcode(other)),
             }
         }
@@ -997,6 +1065,102 @@ fn parse_code_section<'a>(
         cur = entry_end;
     }
     Ok(count)
+}
+
+/// Scan the import section and record the type index for each function import
+/// into `out[0..func_import_count]` (skipping table/memory/global imports).
+fn parse_import_func_types(bytes: &[u8], out: &mut [usize; MAX_FUNCS]) -> Result<usize, InterpError> {
+    let mut cur = 0usize;
+    let (count, n) = read_u32_leb128(bytes).ok_or(InterpError::MalformedCode)?;
+    cur += n;
+    let mut func_count = 0usize;
+
+    for _ in 0..count as usize {
+        // module name
+        let (mod_len, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+        cur += n + mod_len as usize;
+        // field name
+        let (name_len, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+        cur += n + name_len as usize;
+        // import kind
+        if cur >= bytes.len() { return Err(InterpError::MalformedCode); }
+        let kind = bytes[cur]; cur += 1;
+        match kind {
+            0 => { // func: type index
+                let (type_idx, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                cur += n;
+                if func_count < MAX_FUNCS { out[func_count] = type_idx as usize; }
+                func_count += 1;
+            }
+            1 => { // table: reftype (1 byte) + limits
+                cur += 1;
+                if cur >= bytes.len() { return Err(InterpError::MalformedCode); }
+                let flag = bytes[cur]; cur += 1;
+                let (_, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                cur += n;
+                if flag != 0 {
+                    let (_, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                    cur += n;
+                }
+            }
+            2 => { // memory: limits
+                if cur >= bytes.len() { return Err(InterpError::MalformedCode); }
+                let flag = bytes[cur]; cur += 1;
+                let (_, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                cur += n;
+                if flag != 0 {
+                    let (_, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                    cur += n;
+                }
+            }
+            3 => { cur += 2; } // global: valtype + mutability
+            _ => return Err(InterpError::MalformedCode),
+        }
+    }
+    Ok(func_count)
+}
+
+/// Parse element section (kind=0 active segments only) and populate the table.
+fn parse_element_section(
+    bytes:      &[u8],
+    table:      &mut [u32; MAX_TABLE],
+    table_size: &mut usize,
+) -> Result<(), InterpError> {
+    let mut cur = 0usize;
+    let (seg_count, n) = read_u32_leb128(bytes).ok_or(InterpError::MalformedCode)?;
+    cur += n;
+
+    for _ in 0..seg_count as usize {
+        let (kind, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+        cur += n;
+        match kind {
+            0 => {
+                // Active segment: table 0, implicit funcref.
+                // Offset init expr: i32.const <offset> end
+                if cur >= bytes.len() || bytes[cur] != 0x41 { return Err(InterpError::MalformedCode); }
+                cur += 1;
+                let (offset, n) = read_i32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                cur += n;
+                if cur >= bytes.len() || bytes[cur] != 0x0B { return Err(InterpError::MalformedCode); }
+                cur += 1;
+
+                let (elem_count, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                cur += n;
+                let base = offset as usize;
+                for j in 0..elem_count as usize {
+                    let (func_idx, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
+                    cur += n;
+                    let ti = base + j;
+                    if ti < MAX_TABLE {
+                        table[ti] = func_idx;
+                        if ti + 1 > *table_size { *table_size = ti + 1; }
+                    }
+                }
+            }
+            _ => break, // unsupported segment kind — stop, don't error
+        }
+    }
+    Ok(())
 }
 
 fn parse_global_section(

@@ -78,10 +78,10 @@ can execute without hitting unsupported opcode errors.
 
 ### 5. Table + `call_indirect`
 
-* [ ] Parse table section (section ID 4)
-* [ ] Parse element section (section ID 9) — populates function table
-* [ ] `call_indirect <type_idx> <table_idx>` — runtime type check, dispatch
-* [ ] Trap on null table entry or type mismatch → `InterpError::IndirectCallTypeMismatch`
+* [x] Parse table section (section ID 4)
+* [x] Parse element section (section ID 9) — populates function table
+* [x] `call_indirect <type_idx> <table_idx>` — runtime type check, dispatch
+* [x] Trap on null table entry or type mismatch → `InterpError::IndirectCallTypeMismatch`
 
 ---
 
