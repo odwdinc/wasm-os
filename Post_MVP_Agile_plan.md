@@ -141,10 +141,10 @@ Each `run` call gets a clean, isolated instance.
 
 ### 3. Instance Pool
 
-* [ ] Fixed-size pool: `[Option<Instance>; MAX_INSTANCES]`
-* [ ] `spawn(name)` → allocate slot, instantiate module, return handle
-* [ ] `destroy(handle)` → zero memory, free slot
-* [ ] `ps` shell command — list running instances with name + memory usage
+* [x] Fixed-size pool: `[Option<Instance>; MAX_INSTANCES]`
+* [x] `spawn(name)` → allocate slot, instantiate module, return handle
+* [x] `destroy(handle)` → zero memory, free slot
+* [x] `ps` shell command — list running instances with name + memory usage
 
 ---
 

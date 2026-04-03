@@ -82,6 +82,7 @@ pub fn run_command(line: &str) {
         "ls"      => cmd_ls(),
         "info"    => cmd_info(argv.get(1).copied().unwrap_or("")),
         "run"     => cmd_run(&argv[1..argc]),
+        "ps"      => cmd_ps(),
         _         => { crate::println!("unknown command: {}", argv[0]); }
     }
 }
@@ -128,6 +129,7 @@ fn cmd_help() {
     crate::println!("  ls                 list registered .wasm files");
     crate::println!("  info <name>        show module info");
     crate::println!("  run <name>         execute a .wasm module");
+    crate::println!("  ps                 list running wasm instances");
 }
 
 fn cmd_echo(args: &[&str]) {
@@ -208,9 +210,25 @@ fn cmd_run(argv: &[&str]) {
             None    => { crate::println!("invalid arg: {}", s); return; }
         }
     }
-    match crate::wasm::engine::run(data, "main", &wasm_args[..arg_count]) {
-        Ok(_)  => {}
-        Err(e) => { crate::println!("error: {}", e.as_str()); }
+    let handle = match crate::wasm::engine::spawn(name, data) {
+        Ok(h)  => h,
+        Err(e) => { crate::println!("error: {}", e.as_str()); return; }
+    };
+    let result = crate::wasm::engine::call_handle(handle, "main", &wasm_args[..arg_count]);
+    crate::wasm::engine::destroy(handle);
+    if let Err(e) = result {
+        crate::println!("error: {}", e.as_str());
+    }
+}
+
+fn cmd_ps() {
+    let mut any = false;
+    crate::wasm::engine::for_each_instance(|handle, name, mem_pages| {
+        crate::println!("[{}] {}  ({} page(s), {} KiB)", handle, name, mem_pages, mem_pages * 64);
+        any = true;
+    });
+    if !any {
+        crate::println!("(no instances)");
     }
 }
 
