@@ -178,18 +178,22 @@ const BLANK_CTRL: CtrlFrame = CtrlFrame {
 // ── Call-stack frame ──────────────────────────────────────────────────────────
 #[derive(Clone, Copy)]
 struct Frame {
-    body_idx:    usize,
-    pc:          usize,
-    locals:      [i64; MAX_LOCALS],
-    local_count: usize,
-    /// ctrl_depth value at the moment this function was entered.
-    ctrl_base:   usize,
+    body_idx:     usize,
+    pc:           usize,
+    locals:       [i64; MAX_LOCALS],
+    local_count:  usize,
+    /// ctrl_depth at function entry (restored on return).
+    ctrl_base:    usize,
+    /// vsp after params were moved into locals (restored on return + results).
+    vsp_base:     usize,
+    /// Number of return values this function produces.
+    result_count: usize,
 }
 
 const BLANK_FRAME: Frame = Frame {
     body_idx: 0, pc: 0,
     locals: [0i64; MAX_LOCALS], local_count: 0,
-    ctrl_base: 0,
+    ctrl_base: 0, vsp_base: 0, result_count: 0,
 };
 
 // ── Default host ──────────────────────────────────────────────────────────────
@@ -199,13 +203,14 @@ fn default_host(_: usize, _: &mut [i64], _: &mut usize, _: &mut [u8]) -> Result<
 
 // ── Interpreter ───────────────────────────────────────────────────────────────
 pub struct Interpreter<'a> {
-    bodies:            [&'a [u8]; MAX_FUNCS],
-    body_count:        usize,
-    local_counts:      [usize; MAX_FUNCS],
-    type_param_counts: [usize; MAX_TYPES],
-    type_count:        usize,
-    func_type_indices: [usize; MAX_FUNCS],
-    pub import_count:  usize,
+    bodies:             [&'a [u8]; MAX_FUNCS],
+    body_count:         usize,
+    local_counts:       [usize; MAX_FUNCS],
+    type_param_counts:  [usize; MAX_TYPES],
+    type_result_counts: [usize; MAX_TYPES],
+    type_count:         usize,
+    func_type_indices:  [usize; MAX_FUNCS],
+    pub import_count:   usize,
 
     pub vstack: [i64; STACK_DEPTH],
     pub vsp:    usize,
@@ -225,9 +230,10 @@ pub struct Interpreter<'a> {
 
 impl<'a> Interpreter<'a> {
     pub fn new(module: &'a Module<'a>, import_count: usize) -> Result<Self, InterpError> {
-        let mut type_param_counts = [0usize; MAX_TYPES];
+        let mut type_param_counts  = [0usize; MAX_TYPES];
+        let mut type_result_counts = [0usize; MAX_TYPES];
         let type_count = if let Some(tb) = module.type_section {
-            parse_type_section(tb, &mut type_param_counts)?
+            parse_type_section(tb, &mut type_param_counts, &mut type_result_counts)?
         } else { 0 };
 
         let mut func_type_indices = [0usize; MAX_FUNCS];
@@ -247,7 +253,7 @@ impl<'a> Interpreter<'a> {
 
         Ok(Self {
             bodies, body_count, local_counts,
-            type_param_counts, type_count, func_type_indices,
+            type_param_counts, type_result_counts, type_count, func_type_indices,
             import_count,
             vstack: [0i64; STACK_DEPTH], vsp: 0,
             frames: [BLANK_FRAME; CALL_DEPTH], fdepth: 0,
@@ -270,25 +276,33 @@ impl<'a> Interpreter<'a> {
         if self.vsp > 0 { Some(self.vstack[self.vsp - 1] as i32) } else { None }
     }
 
+    pub fn top(&self) -> Option<i64> {
+        if self.vsp > 0 { Some(self.vstack[self.vsp - 1]) } else { None }
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     fn push_frame(&mut self, body_idx: usize) -> Result<(), InterpError> {
         if self.fdepth >= CALL_DEPTH { return Err(InterpError::CallStackOverflow); }
 
-        let type_idx    = self.func_type_indices[body_idx];
-        let param_count = if type_idx < self.type_count { self.type_param_counts[type_idx] } else { 0 };
-        let decl_count  = self.local_counts[body_idx];
-        let total       = param_count + decl_count;
+        let type_idx     = self.func_type_indices[body_idx];
+        let param_count  = if type_idx < self.type_count { self.type_param_counts[type_idx]  } else { 0 };
+        let result_count = if type_idx < self.type_count { self.type_result_counts[type_idx] } else { 0 };
+        let decl_count   = self.local_counts[body_idx];
+        let total        = param_count + decl_count;
         if total > MAX_LOCALS { return Err(InterpError::TooManyLocals); }
 
         let mut frame = Frame {
             body_idx, pc: 0,
             locals: [0i64; MAX_LOCALS], local_count: total,
             ctrl_base: self.ctrl_depth,
+            vsp_base: 0,  // filled in below after params are popped
+            result_count,
         };
         for i in (0..param_count).rev() {
             frame.locals[i] = self.v_pop()?;
         }
+        frame.vsp_base = self.vsp; // stack base for this frame's results
         self.frames[self.fdepth] = frame;
         self.fdepth += 1;
         Ok(())
@@ -324,8 +338,7 @@ impl<'a> Interpreter<'a> {
 
             if pc >= body.len() {
                 // Implicit return at end of body.
-                self.ctrl_depth = self.frames[fi].ctrl_base;
-                self.fdepth -= 1;
+                do_return(self);
                 continue;
             }
 
@@ -414,8 +427,8 @@ impl<'a> Interpreter<'a> {
                         // End of a block/loop/if.
                         self.ctrl_depth -= 1;
                     } else {
-                        // End of function body.
-                        self.fdepth -= 1;
+                        // End of function body — treat as implicit return.
+                        do_return(self);
                     }
                 }
 
@@ -468,11 +481,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── return ────────────────────────────────────────────────────
-                OP_RETURN => {
-                    let fi = self.fdepth - 1;
-                    self.ctrl_depth = self.frames[fi].ctrl_base;
-                    self.fdepth -= 1;
-                }
+                OP_RETURN => { do_return(self); }
 
                 // ── drop / select ─────────────────────────────────────────────
                 OP_DROP => { self.v_pop()?; }
@@ -779,15 +788,30 @@ impl<'a> Interpreter<'a> {
 
 // ── br helper (shared by OP_BR and OP_BR_IF) ─────────────────────────────────
 
+/// Collapse the current call frame's stack to exactly result_count values,
+/// moving them to sit just above vsp_base, then pop the frame.
+fn do_return(interp: &mut Interpreter) {
+    let fi           = interp.fdepth - 1;
+    let result_count = interp.frames[fi].result_count;
+    let vsp_base     = interp.frames[fi].vsp_base;
+    // Copy the top result_count values down to vsp_base.
+    let src = interp.vsp.saturating_sub(result_count);
+    for i in 0..result_count {
+        interp.vstack[vsp_base + i] = interp.vstack[src + i];
+    }
+    interp.vsp        = vsp_base + result_count;
+    interp.ctrl_depth = interp.frames[fi].ctrl_base;
+    interp.fdepth    -= 1;
+}
+
 fn do_br(interp: &mut Interpreter, n: usize) -> Result<(), InterpError> {
     let fi        = interp.fdepth - 1;
     let ctrl_base = interp.frames[fi].ctrl_base;
     let available = interp.ctrl_depth - ctrl_base;
 
     if n >= available {
-        // Branch past function boundary → return.
-        interp.ctrl_depth = ctrl_base;
-        interp.fdepth    -= 1;
+        // Branch past function boundary → implicit return.
+        do_return(interp);
         return Ok(());
     }
 
@@ -893,7 +917,11 @@ fn read_memarg(bytes: &[u8]) -> Option<(u32, usize)> {
 
 // ── Section parsers ───────────────────────────────────────────────────────────
 
-fn parse_type_section(bytes: &[u8], out: &mut [usize; MAX_TYPES]) -> Result<usize, InterpError> {
+fn parse_type_section(
+    bytes:      &[u8],
+    param_out:  &mut [usize; MAX_TYPES],
+    result_out: &mut [usize; MAX_TYPES],
+) -> Result<usize, InterpError> {
     let mut cur = 0usize;
     let (count, n) = read_u32_leb128(bytes).ok_or(InterpError::MalformedCode)?;
     cur += n;
@@ -902,14 +930,15 @@ fn parse_type_section(bytes: &[u8], out: &mut [usize; MAX_TYPES]) -> Result<usiz
 
     for i in 0..count {
         if cur >= bytes.len() { return Err(InterpError::MalformedCode); }
-        cur += 1; // skip 0x60
+        cur += 1; // skip 0x60 func-type marker
         let (param_count, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
         cur += n;
-        out[i] = param_count as usize;
-        cur += param_count as usize;
+        param_out[i] = param_count as usize;
+        cur += param_count as usize; // skip param valtypes (1 byte each)
         let (result_count, n) = read_u32_leb128(&bytes[cur..]).ok_or(InterpError::MalformedCode)?;
         cur += n;
-        cur += result_count as usize;
+        result_out[i] = result_count as usize;
+        cur += result_count as usize; // skip result valtypes
     }
     Ok(count)
 }

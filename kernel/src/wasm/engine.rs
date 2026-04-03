@@ -193,7 +193,7 @@ pub fn count_func_imports(import_section: Option<&[u8]>) -> usize {
 /// Parse `bytes` as a WASM binary, initialise linear memory from data segments,
 /// wire up host functions, look up `entry` in the export section, execute it,
 /// and return the top of the value stack (if any) after execution.
-pub fn run(bytes: &[u8], entry: &str, args: &[i32]) -> Result<Option<i32>, RunError> {
+pub fn run(bytes: &[u8], entry: &str, args: &[i32]) -> Result<Option<i64>, RunError> {
     let module       = load(bytes).map_err(RunError::Load)?;
     let import_count = count_func_imports(module.import_section);
 
@@ -221,7 +221,7 @@ pub fn run(bytes: &[u8], entry: &str, args: &[i32]) -> Result<Option<i32>, RunEr
     }
 
     interp.call(func_idx).map_err(RunError::Interp)?;
-    Ok(interp.top_i32())
+    Ok(interp.top())
 }
 
 // ── Embedded userland modules ─────────────────────────────────────────────────

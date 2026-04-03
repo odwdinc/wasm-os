@@ -61,9 +61,9 @@ can execute without hitting unsupported opcode errors.
 
 ### 3. Multi-Value Returns
 
-* [ ] Update type section parser to handle multiple return types
-* [ ] Update call/return logic to push/pop multiple values
-* [ ] Update `engine::run()` to return `Vec`-equivalent (fixed-size array) of results
+* [x] Update type section parser to handle multiple return types
+* [x] Update call/return logic to push/pop multiple values
+* [x] Update `engine::run()` to return `Vec`-equivalent (fixed-size array) of results
 
 ---
 
