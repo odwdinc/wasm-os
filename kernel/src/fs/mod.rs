@@ -4,6 +4,7 @@
 // block.rs holds the BlockDevice trait and Ramdisk implementation.
 
 pub mod block;
+pub mod wasmfs;
 
 const MAX_FILES: usize = 16;
 

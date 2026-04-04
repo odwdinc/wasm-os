@@ -266,10 +266,10 @@ rebuilding the kernel.
 
 ### 2. Flat Filesystem (WasmFS)
 
-* [ ] Custom simple format: fixed-size directory entries + data region
-* [ ] Directory entry: `name[32]`, `start_block: u32`, `size: u32`, `flags: u8`
-* [ ] `fs_open(name)`, `fs_read(fd, buf, len)`, `fs_write(fd, buf, len)`, `fs_close(fd)`
-* [ ] `fs_unlink(name)`, `fs_list()` iterator
+* [x] Custom simple format: fixed-size directory entries + data region
+* [x] Directory entry: `name[32]`, `start_block: u32`, `size: u32`, `flags: u8`
+* [x] `fs_open(name)`, `fs_read(fd, buf, len)`, `fs_write(fd, buf, len)`, `fs_close(fd)`
+* [x] `fs_unlink(name)`, `fs_list()` iterator
 
 ---
 
