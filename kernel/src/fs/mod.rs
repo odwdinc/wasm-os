@@ -1,7 +1,9 @@
-// fs.rs — In-memory file system (Sprint 3.1)
+// fs/mod.rs — Filesystem subsystem (Sprint 3.1 + Sprint D)
 //
-// Fixed-size, no-heap file table.  All names and data are 'static because
-// registered files are either embedded byte arrays or other static slices.
+// mod.rs holds the in-memory file table (static, no-heap).
+// block.rs holds the BlockDevice trait and Ramdisk implementation.
+
+pub mod block;
 
 const MAX_FILES: usize = 16;
 

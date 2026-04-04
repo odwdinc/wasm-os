@@ -258,8 +258,8 @@ rebuilding the kernel.
 
 ### 1. Block Device Abstraction
 
-* [ ] `BlockDevice` trait: `read_block(lba, buf)`, `write_block(lba, buf)`
-* [ ] Ramdisk implementation: embedded `static mut` byte array, block-addressed
+* [x] `BlockDevice` trait: `read_block(lba, buf)`, `write_block(lba, buf)`
+* [x] Ramdisk implementation: embedded `static mut` byte array, block-addressed
 * [ ] QEMU virtio-blk driver (stretch — enables true disk persistence)
 
 ---

@@ -1,5 +1,5 @@
 [workspace]
-members = ["kernel", "runtime", "fs", "shared"]
+members = ["kernel", "shared"]
 resolver = "2"
 
 [profile.dev]
