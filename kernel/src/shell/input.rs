@@ -1,9 +1,7 @@
-//! High-level input: reads from PS/2 keyboard and serial console,
-//! echoes characters, builds lines, and dispatches shell commands.
+//! Non-blocking keyboard/serial input and shell line editor.
 //!
-//! Sprint C.5: the loop is no longer here — `poll_once` is called by the
-//! scheduler on every round so the shell participates in round-robin alongside
-//! WASM tasks.
+//! `poll_once` is called by the scheduler on every round so the shell
+//! participates in round-robin alongside WASM tasks.
 
 use crate::drivers::keyboard::{try_next_key, Key};
 
@@ -11,7 +9,6 @@ const MAX_LINE: usize = 256;
 
 // ── Shell state ───────────────────────────────────────────────────────────────
 
-/// Persistent state for the interactive shell line editor.
 pub struct ShellState {
     buf:            [u8; MAX_LINE],
     len:            usize,
@@ -37,10 +34,9 @@ fn serial_byte_to_key(b: u8) -> Key {
 
 // ── Non-blocking step ─────────────────────────────────────────────────────────
 
-/// Check for one key event and handle it.  Returns `true` if a key was
+/// Check for one key event and handle it. Returns `true` if a key was
 /// available (so the caller knows not to idle).
 pub fn poll_once(state: &mut ShellState) -> bool {
-    // Print the prompt lazily so it appears even before the first keypress.
     if state.prompt_pending {
         crate::print!("> ");
         state.prompt_pending = false;

@@ -17,11 +17,11 @@ use crate::wasm::engine::TaskResult;
 static mut CURSOR: usize = 0;
 
 pub fn run() -> ! {
-    let mut shell = crate::keyboard::ShellState::new();
+    let mut shell = crate::shell::input::ShellState::new();
 
     loop {
         // ── Shell turn ────────────────────────────────────────────────────────
-        let had_input = crate::keyboard::poll_once(&mut shell);
+        let had_input = crate::shell::input::poll_once(&mut shell);
 
         // ── WASM task turn (round-robin) ──────────────────────────────────────
         let ran_task = run_next_task();

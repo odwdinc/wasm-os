@@ -4,7 +4,6 @@
 mod drivers;
 mod fs;
 mod interrupts;
-mod keyboard;
 mod scheduler;
 mod shell;
 mod vga;
