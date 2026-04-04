@@ -75,15 +75,18 @@ pub fn run_command(line: &str) {
     if argc == 0 { return; }
 
     match argv[0] {
-        "help"    => cmd_help(),
-        "echo"    => cmd_echo(&argv[1..argc]),
-        "history" => cmd_history(),
-        "clear"   => cmd_clear(),
-        "ls"      => cmd_ls(),
-        "info"    => cmd_info(argv.get(1).copied().unwrap_or("")),
-        "run"     => cmd_run(&argv[1..argc]),
-        "ps"      => cmd_ps(),
-        _         => { crate::println!("unknown command: {}", argv[0]); }
+        "help"      => cmd_help(),
+        "echo"      => cmd_echo(&argv[1..argc]),
+        "history"   => cmd_history(),
+        "clear"     => cmd_clear(),
+        "ls"        => cmd_ls(),
+        "info"      => cmd_info(argv.get(1).copied().unwrap_or("")),
+        "run"       => cmd_run(&argv[1..argc]),
+        "ps"        => cmd_ps(),
+        "task-run"  => cmd_task_run(&argv[1..argc]),
+        "task-kill" => cmd_task_kill(&argv[1..argc]),
+        "tasks"     => cmd_tasks(),
+        _           => { crate::println!("unknown command: {}", argv[0]); }
     }
 }
 
@@ -130,6 +133,9 @@ fn cmd_help() {
     crate::println!("  info [name]        show module info, or tick count if no name");
     crate::println!("  run <name>         execute a .wasm module");
     crate::println!("  ps                 list running wasm instances");
+    crate::println!("  task-run <name>    spawn a module as a task");
+    crate::println!("  task-kill <id>     kill a task by ID");
+    crate::println!("  tasks              list all tasks");
 }
 
 fn cmd_echo(args: &[&str]) {
@@ -231,6 +237,57 @@ fn cmd_ps() {
     if !any {
         crate::println!("(no instances)");
     }
+}
+
+fn cmd_task_run(argv: &[&str]) {
+    let name = match argv.first() {
+        Some(n) if !n.is_empty() => *n,
+        _ => { crate::println!("usage: task-run <name>"); return; }
+    };
+    let data = match crate::fs::find_file(name) {
+        Some(d) => d,
+        None    => { crate::println!("not found: {}", name); return; }
+    };
+    match crate::wasm::task::task_spawn(name, data) {
+        Ok(id)  => crate::println!("task {} spawned: {}", id, name),
+        Err(e)  => crate::println!("error: {}", e.as_str()),
+    }
+}
+
+fn cmd_task_kill(argv: &[&str]) {
+    let id = match argv.first().and_then(|s| parse_usize(s)) {
+        Some(n) => n,
+        None    => { crate::println!("usage: task-kill <id>"); return; }
+    };
+    crate::wasm::task::task_kill(id);
+    crate::println!("task {} killed", id);
+}
+
+fn cmd_tasks() {
+    let mut any = false;
+    crate::wasm::task::for_each_task(|id, name, state| {
+        let s = match state {
+            crate::wasm::task::TaskState::Ready     => "ready",
+            crate::wasm::task::TaskState::Running   => "running",
+            crate::wasm::task::TaskState::Suspended => "suspended",
+            crate::wasm::task::TaskState::Done      => "done",
+        };
+        crate::println!("[{}] {}  ({})", id, name, s);
+        any = true;
+    });
+    if !any { crate::println!("(no tasks)"); }
+}
+
+/// Parse a decimal usize. Returns None on invalid input.
+fn parse_usize(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() { return None; }
+    let mut val = 0usize;
+    for &b in bytes {
+        if b < b'0' || b > b'9' { return None; }
+        val = val.checked_mul(10)?.checked_add((b - b'0') as usize)?;
+    }
+    Some(val)
 }
 
 /// Parse a decimal integer string into i32. Returns None on invalid input.

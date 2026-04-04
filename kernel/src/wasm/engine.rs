@@ -399,6 +399,57 @@ pub fn for_each_instance<F: FnMut(usize, &str, usize)>(mut f: F) {
     }
 }
 
+// ── Task execution helpers ────────────────────────────────────────────────────
+
+/// Result of a task execution step.
+pub enum TaskResult {
+    /// Task ran to completion; holds the optional return value.
+    Completed(Option<i64>),
+    /// Task called `host_yield` and suspended; call `resume_task` to continue.
+    Yielded,
+}
+
+/// Begin executing `entry` on an already-spawned instance.
+/// Returns `Yielded` if the task requested a cooperative yield before finishing.
+pub fn start_task(handle: usize, entry: &str, args: &[i32]) -> Result<TaskResult, RunError> {
+    if handle >= MAX_INSTANCES { return Err(RunError::EntryNotFound); }
+    let inst = unsafe {
+        if !POOL[handle].active { return Err(RunError::EntryNotFound); }
+        POOL[handle].inst.assume_init_mut()
+    };
+    let module   = load(inst.bytes).map_err(RunError::Load)?;
+    let func_idx = find_export(&module, entry)
+        .ok_or(RunError::EntryNotFound)? as usize;
+
+    inst.interp.reset_for_call();
+    for &arg in args {
+        if inst.interp.vsp >= STACK_DEPTH {
+            return Err(RunError::Interp(InterpError::StackOverflow));
+        }
+        inst.interp.vstack[inst.interp.vsp] = arg as i64;
+        inst.interp.vsp += 1;
+    }
+    match inst.interp.call(func_idx) {
+        Ok(())                             => Ok(TaskResult::Completed(inst.interp.top())),
+        Err(InterpError::Yielded)          => Ok(TaskResult::Yielded),
+        Err(e)                             => Err(RunError::Interp(e)),
+    }
+}
+
+/// Continue a suspended task from where it yielded.
+pub fn resume_task(handle: usize) -> Result<TaskResult, RunError> {
+    if handle >= MAX_INSTANCES { return Err(RunError::EntryNotFound); }
+    let inst = unsafe {
+        if !POOL[handle].active { return Err(RunError::EntryNotFound); }
+        POOL[handle].inst.assume_init_mut()
+    };
+    match inst.interp.resume() {
+        Ok(())                             => Ok(TaskResult::Completed(inst.interp.top())),
+        Err(InterpError::Yielded)          => Ok(TaskResult::Yielded),
+        Err(e)                             => Err(RunError::Interp(e)),
+    }
+}
+
 // ── Convenience wrapper ───────────────────────────────────────────────────────
 
 /// Spawn an instance, call `entry`, destroy it, return the result.

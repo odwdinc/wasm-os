@@ -197,10 +197,10 @@ Long-running modules don't freeze the terminal.
 
 ### 2. Task / Fiber Abstraction
 
-* [ ] `Task` struct: instance handle + saved execution state (interpreter PC + stack snapshot)
-* [ ] Fixed-size task queue: `[Option<Task>; MAX_TASKS]`
-* [ ] `task_spawn(name)` → add to queue, return task ID
-* [ ] `task_kill(id)` → mark for removal
+* [x] `Task` struct: instance handle + saved execution state (interpreter PC + stack snapshot)
+* [x] Fixed-size task queue: `[Option<Task>; MAX_TASKS]`
+* [x] `task_spawn(name)` → add to queue, return task ID
+* [x] `task_kill(id)` → mark for removal
 
 ---
 

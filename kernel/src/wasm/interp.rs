@@ -138,6 +138,8 @@ pub enum InterpError {
     MemOutOfBounds,
     DivisionByZero,
     UnknownOpcode(u8),
+    /// Not a real error — used to suspend a task cooperatively.
+    Yielded,
 }
 
 impl InterpError {
@@ -164,6 +166,7 @@ impl InterpError {
             Self::MemOutOfBounds        => "memory access out of bounds",
             Self::DivisionByZero        => "integer divide by zero",
             Self::UnknownOpcode(_)      => "unknown opcode",
+            Self::Yielded               => "task yielded",
         }
     }
 }
@@ -242,6 +245,9 @@ pub struct Interpreter<'a> {
 
     pub mem:      &'a mut [u8],
     pub host_fns: [Option<HostFn>; MAX_FUNCS],
+
+    /// Set by `request_yield()`; checked at the top of each dispatch iteration.
+    pub yield_requested: bool,
 }
 
 impl<'a> Interpreter<'a> {
@@ -298,6 +304,7 @@ impl<'a> Interpreter<'a> {
 
             mem,
             host_fns,
+            yield_requested: false,
         })
     }
 
@@ -309,13 +316,26 @@ impl<'a> Interpreter<'a> {
         self.run()
     }
 
+    /// Re-enter the dispatch loop without resetting state.
+    /// Use after the interpreter returned `Yielded` to continue where it left off.
+    pub fn resume(&mut self) -> Result<(), InterpError> {
+        self.run()
+    }
+
+    /// Request a cooperative yield at the next dispatch iteration.
+    /// Intended to be called from a host function implementation.
+    pub fn request_yield(&mut self) {
+        self.yield_requested = true;
+    }
+
     /// Reset only the execution state (stack, call frames, control stack).
     /// Memory and globals are preserved — call this between invocations on the
     /// same instance rather than creating a new Interpreter from scratch.
     pub fn reset_for_call(&mut self) {
-        self.vsp        = 0;
-        self.fdepth     = 0;
-        self.ctrl_depth = 0;
+        self.vsp             = 0;
+        self.fdepth          = 0;
+        self.ctrl_depth      = 0;
+        self.yield_requested = false;
     }
 
     #[allow(dead_code)]
@@ -378,6 +398,11 @@ impl<'a> Interpreter<'a> {
     // ── Main dispatch loop ─────────────────────────────────────────────────────
     fn run(&mut self) -> Result<(), InterpError> {
         while self.fdepth > 0 {
+            if self.yield_requested {
+                self.yield_requested = false;
+                return Err(InterpError::Yielded);
+            }
+
             let fi       = self.fdepth - 1;
             let body_idx = self.frames[fi].body_idx;
             let pc       = self.frames[fi].pc;
