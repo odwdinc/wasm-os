@@ -291,8 +291,8 @@ rebuilding the kernel.
 
 ### 5. Persist In-Memory FS to Disk
 
-* [ ] On `save` or periodic flush: sync in-memory file table back to block device
-* [ ] On boot: load directory from block device into in-memory table
+* [x] On `save` or periodic flush: sync in-memory file table back to block device
+* [x] On boot: load directory from block device into in-memory table
 
 ---
 

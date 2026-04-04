@@ -117,3 +117,32 @@ pub fn alloc_write_buf(data: &[u8]) -> Option<&'static [u8]> {
         Some(&WRITE_POOL[slot][..data.len()])
     }
 }
+
+// ── Persist to Ramdisk (Sprint D.5) ─────────────────────────────────────────
+
+/// Serialize the entire in-memory file table into the Ramdisk using WasmFS
+/// format.  Returns the number of files successfully written.
+///
+/// The Ramdisk is volatile (it is a `static mut` byte array reset to zero on
+/// cold boot), so persistence across reboots requires a real block device
+/// driver (virtio-blk, Sprint D stretch).  Within a session, any file visible
+/// via `ls` — including those added by `write` — is preserved in the Ramdisk
+/// and can be read back by `WasmFs<Ramdisk>`.
+pub fn save_to_ramdisk() -> usize {
+    use wasmfs::WasmFs;
+    use block::Ramdisk;
+
+    let mut wfs = WasmFs::new(Ramdisk::get());
+    let mut saved = 0usize;
+
+    unsafe {
+        for i in 0..FILE_COUNT {
+            if let Some(f) = FILE_TABLE[i] {
+                if wfs.fs_write(f.name_str(), f.data).is_ok() {
+                    saved += 1;
+                }
+            }
+        }
+    }
+    saved
+}

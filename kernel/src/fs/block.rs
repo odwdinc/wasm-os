@@ -23,6 +23,8 @@ pub trait BlockDevice {
     fn write_block(&mut self, lba: u32, buf: &[u8; BLOCK_SIZE]) -> Result<(), ()>;
 
     /// Total number of blocks on this device.
+    /// Not yet called within the kernel; reserved for virtio-blk and tooling.
+    #[allow(dead_code)]
     fn block_count(&self) -> u32;
 }
 
@@ -70,43 +72,5 @@ impl BlockDevice for Ramdisk {
 
     fn block_count(&self) -> u32 {
         RAMDISK_BLOCKS as u32
-    }
-}
-
-// ---------------------------------------------------------------------------
-// EmbeddedDisk — read-only BlockDevice over a &'static [u8]
-// ---------------------------------------------------------------------------
-//
-// Wraps a byte slice that was embedded at compile time (e.g. via
-// include_bytes!).  Writes are rejected (Err(())).  Used by mount_from_image
-// to let WasmFs<EmbeddedDisk> read the boot filesystem image without needing
-// a real disk driver.
-
-pub struct EmbeddedDisk {
-    data: &'static [u8],
-}
-
-impl EmbeddedDisk {
-    pub fn new(data: &'static [u8]) -> Self {
-        EmbeddedDisk { data }
-    }
-}
-
-impl BlockDevice for EmbeddedDisk {
-    fn read_block(&mut self, lba: u32, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), ()> {
-        let offset = lba as usize * BLOCK_SIZE;
-        if offset + BLOCK_SIZE > self.data.len() {
-            return Err(());
-        }
-        buf.copy_from_slice(&self.data[offset..offset + BLOCK_SIZE]);
-        Ok(())
-    }
-
-    fn write_block(&mut self, _lba: u32, _buf: &[u8; BLOCK_SIZE]) -> Result<(), ()> {
-        Err(()) // read-only
-    }
-
-    fn block_count(&self) -> u32 {
-        (self.data.len() / BLOCK_SIZE) as u32
     }
 }

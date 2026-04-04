@@ -7,6 +7,7 @@ pub fn run() {
     crate::println!("  ls                 list files with sizes");
     crate::println!("  rm <name>          remove a file");
     crate::println!("  write <name> <hex> write raw bytes (hex-encoded) as a file");
+    crate::println!("  save               flush file table to ramdisk (WasmFS format)");
     crate::println!("  info [name]        show module info, or tick count if no name");
     crate::println!("  run <name>         execute a .wasm module");
     crate::println!("  ps                 list running wasm instances");

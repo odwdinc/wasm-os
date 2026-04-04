@@ -281,27 +281,6 @@ pub struct Instance<'a> {
     interp: Interpreter<'a>,
 }
 
-fn call_instance<'a>(
-    inst:  &mut Instance<'a>,
-    entry: &str,
-    args:  &[i32],
-) -> Result<Option<i64>, RunError> {
-    let module   = load(inst.bytes).map_err(RunError::Load)?;
-    let func_idx = find_export(&module, entry)
-        .ok_or(RunError::EntryNotFound)? as usize;
-
-    inst.interp.reset_for_call();
-    for &arg in args {
-        if inst.interp.vsp >= STACK_DEPTH {
-            return Err(RunError::Interp(InterpError::StackOverflow));
-        }
-        inst.interp.vstack[inst.interp.vsp] = arg as i64;
-        inst.interp.vsp += 1;
-    }
-    inst.interp.call(func_idx).map_err(RunError::Interp)?;
-    Ok(inst.interp.top())
-}
-
 // ── Instance pool ─────────────────────────────────────────────────────────────
 
 const MAX_INST_NAME: usize = 32;
@@ -334,7 +313,7 @@ static mut POOL: [PoolSlot; MAX_INSTANCES] = [BLANK_SLOT; MAX_INSTANCES];
 pub fn spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     // Find a free slot.
     let slot = unsafe {
-        POOL.iter().position(|s| !s.active).ok_or(RunError::PoolFull)?
+        (*core::ptr::addr_of!(POOL)).iter().position(|s| !s.active).ok_or(RunError::PoolFull)?
     };
 
     let module = load(bytes).map_err(RunError::Load)?;
@@ -393,17 +372,6 @@ pub fn spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     Ok(slot)
 }
 
-/// Execute `entry` on the instance identified by `handle`.
-pub fn call_handle(handle: usize, entry: &str, args: &[i32]) -> Result<Option<i64>, RunError> {
-    if handle >= MAX_INSTANCES { return Err(RunError::EntryNotFound); }
-    // SAFETY: active flag guarantees the MaybeUninit is initialised.
-    let inst = unsafe {
-        if !POOL[handle].active { return Err(RunError::EntryNotFound); }
-        POOL[handle].inst.assume_init_mut()
-    };
-    call_instance(inst, entry, args)
-}
-
 /// Free the pool slot: drop the instance and zero its memory.
 pub fn destroy(handle: usize) {
     if handle >= MAX_INSTANCES { return; }
@@ -419,7 +387,7 @@ pub fn destroy(handle: usize) {
 /// Call `f(handle, name, mem_pages)` for each active pool slot.
 pub fn for_each_instance<F: FnMut(usize, &str, usize)>(mut f: F) {
     unsafe {
-        for (i, s) in POOL.iter().enumerate() {
+        for (i, s) in (*core::ptr::addr_of!(POOL)).iter().enumerate() {
             if s.active {
                 let name = core::str::from_utf8(&s.name[..s.name_len]).unwrap_or("?");
                 f(i, name, s.mem_pages);

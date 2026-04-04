@@ -246,7 +246,7 @@ pub struct Interpreter<'a> {
     pub mem:      &'a mut [u8],
     pub host_fns: [Option<HostFn>; MAX_FUNCS],
 
-    /// Set by `request_yield()`; checked at the top of each dispatch iteration.
+    /// Set by host functions; checked at the top of each dispatch iteration.
     pub yield_requested: bool,
 }
 
@@ -320,12 +320,6 @@ impl<'a> Interpreter<'a> {
     /// Use after the interpreter returned `Yielded` to continue where it left off.
     pub fn resume(&mut self) -> Result<(), InterpError> {
         self.run()
-    }
-
-    /// Request a cooperative yield at the next dispatch iteration.
-    /// Intended to be called from a host function implementation.
-    pub fn request_yield(&mut self) {
-        self.yield_requested = true;
     }
 
     /// Reset only the execution state (stack, call frames, control stack).

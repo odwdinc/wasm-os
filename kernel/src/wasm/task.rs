@@ -26,6 +26,7 @@ pub enum TaskState {
     /// Called `sleep_ms`; will resume once the tick counter reaches the stored wake tick.
     Sleeping(u64),
     /// Ran to completion or was killed.
+    #[allow(dead_code)]
     Done,
 }
 
@@ -50,7 +51,7 @@ static mut TASK_QUEUE: [Option<Task>; MAX_TASKS] = [BLANK; MAX_TASKS];
 /// Instantiate `bytes` and register it as a new task.  Returns the task ID.
 pub fn task_spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     let slot = unsafe {
-        TASK_QUEUE.iter().position(|t| t.is_none()).ok_or(RunError::PoolFull)?
+        (*core::ptr::addr_of!(TASK_QUEUE)).iter().position(|t| t.is_none()).ok_or(RunError::PoolFull)?
     };
 
     let instance = engine::spawn(name, bytes)?;
@@ -82,6 +83,7 @@ pub fn task_kill(id: usize) {
 }
 
 /// Return the current state of a task, or `None` if the slot is empty.
+#[allow(dead_code)]
 pub fn task_state(id: usize) -> Option<TaskState> {
     if id >= MAX_TASKS { return None; }
     unsafe { TASK_QUEUE[id].as_ref().map(|t| t.state) }
@@ -165,15 +167,10 @@ pub fn is_task_runnable(id: usize) -> bool {
     }
 }
 
-/// True if any task slot is occupied (including sleeping tasks).
-pub fn has_any_task() -> bool {
-    unsafe { TASK_QUEUE.iter().any(|t| t.is_some()) }
-}
-
 /// Call `f(id, name, state)` for every non-empty slot.
 pub fn for_each_task<F: FnMut(usize, &str, TaskState)>(mut f: F) {
     unsafe {
-        for (i, slot) in TASK_QUEUE.iter().enumerate() {
+        for (i, slot) in (*core::ptr::addr_of!(TASK_QUEUE)).iter().enumerate() {
             if let Some(t) = slot {
                 let name = core::str::from_utf8(&t.name[..t.name_len]).unwrap_or("?");
                 f(i, name, t.state);

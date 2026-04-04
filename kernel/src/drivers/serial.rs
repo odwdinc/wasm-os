@@ -18,7 +18,6 @@ const OFF_DLH:  u16 = 1; // Divisor Latch High  (DLAB=1)
 
 // LSR bits
 const LSR_DATA_READY: u8 = 0x01; // received byte waiting
-const LSR_TX_EMPTY:   u8 = 0x20; // transmit holding register empty
 
 #[inline]
 unsafe fn outb(port: u16, val: u8) {

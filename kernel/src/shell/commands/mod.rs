@@ -7,5 +7,6 @@ pub mod ls;
 pub mod ps;
 pub mod rm;
 pub mod run;
+pub mod save;
 pub mod tasks;
 pub mod write;

@@ -1,4 +1,5 @@
 // fs/wasmfs.rs — WasmFS flat filesystem (Sprint D.2)
+#![allow(dead_code)] // WasmFS API built for future sprints; not all methods called yet
 //
 // On-disk layout (all blocks are 512 bytes):
 //
