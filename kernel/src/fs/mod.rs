@@ -61,13 +61,59 @@ pub fn find_file(name: &str) -> Option<&'static [u8]> {
     None
 }
 
-/// Call `f` with the name of every registered file (in registration order).
-pub fn for_each_file<F: FnMut(&str)>(mut f: F) {
+/// Call `f(name, size)` for every registered file (in registration order).
+pub fn for_each_file<F: FnMut(&str, usize)>(mut f: F) {
     unsafe {
         for i in 0..FILE_COUNT {
             if let Some(file) = FILE_TABLE[i] {
-                f(file.name_str());
+                f(file.name_str(), file.data.len());
             }
         }
+    }
+}
+
+/// Remove a file from the in-memory table by name.  Returns `true` if found.
+/// Leaves a `None` hole in the table; iterators already skip `None` slots.
+pub fn remove_file(name: &str) -> bool {
+    unsafe {
+        for i in 0..FILE_COUNT {
+            if let Some(f) = FILE_TABLE[i] {
+                if f.name_str() == name {
+                    FILE_TABLE[i] = None;
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+// ── Write-buffer pool ────────────────────────────────────────────────────────
+//
+// Provides static storage for files created with the `write` shell command.
+// No heap: each slot is a fixed 4 KiB array.  Once all slots are claimed they
+// cannot be reclaimed (this sprint).
+
+const WRITE_SLOTS:    usize = 4;
+const WRITE_SLOT_CAP: usize = 4096;
+
+static mut WRITE_POOL: [[u8; WRITE_SLOT_CAP]; WRITE_SLOTS] =
+    [[0u8; WRITE_SLOT_CAP]; WRITE_SLOTS];
+static mut WRITE_POOL_NEXT: usize = 0;
+
+/// Claim a slot, copy `data` into it, and return a `'static` slice.
+/// Returns `None` if all slots are exhausted or `data` exceeds slot capacity.
+pub fn alloc_write_buf(data: &[u8]) -> Option<&'static [u8]> {
+    if data.len() > WRITE_SLOT_CAP {
+        return None;
+    }
+    unsafe {
+        if WRITE_POOL_NEXT >= WRITE_SLOTS {
+            return None;
+        }
+        let slot = WRITE_POOL_NEXT;
+        WRITE_POOL_NEXT += 1;
+        WRITE_POOL[slot][..data.len()].copy_from_slice(data);
+        Some(&WRITE_POOL[slot][..data.len()])
     }
 }

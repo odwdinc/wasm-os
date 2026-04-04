@@ -283,9 +283,9 @@ rebuilding the kernel.
 
 ### 4. Shell Commands
 
-* [ ] `ls` — reads from persistent FS (replaces in-memory table)
-* [ ] `rm <name>` — delete file
-* [ ] `write <name> <hex-bytes>` — write raw bytes (for testing)
+* [x] `ls` — reads from persistent FS (replaces in-memory table)
+* [x] `rm <name>` — delete file
+* [x] `write <name> <hex-bytes>` — write raw bytes (for testing)
 
 ---
 

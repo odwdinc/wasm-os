@@ -84,6 +84,8 @@ pub fn run_command(line: &str) {
         "history"   => commands::history::run(),
         "clear"     => commands::clear::run(),
         "ls"        => commands::ls::run(),
+        "rm"        => commands::rm::run(&argv[1..argc]),
+        "write"     => commands::write::run(&argv[1..argc]),
         "info"      => commands::info::run(argv.get(1).copied().unwrap_or("")),
         "run"       => commands::run::run(&argv[1..argc]),
         "ps"        => commands::ps::run(),

@@ -5,5 +5,7 @@ pub mod history;
 pub mod info;
 pub mod ls;
 pub mod ps;
+pub mod rm;
 pub mod run;
 pub mod tasks;
+pub mod write;

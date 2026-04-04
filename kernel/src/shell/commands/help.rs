@@ -4,7 +4,9 @@ pub fn run() {
     crate::println!("  echo <args>        print arguments");
     crate::println!("  history            show command history");
     crate::println!("  clear              clear the screen");
-    crate::println!("  ls                 list registered .wasm files");
+    crate::println!("  ls                 list files with sizes");
+    crate::println!("  rm <name>          remove a file");
+    crate::println!("  write <name> <hex> write raw bytes (hex-encoded) as a file");
     crate::println!("  info [name]        show module info, or tick count if no name");
     crate::println!("  run <name>         execute a .wasm module");
     crate::println!("  ps                 list running wasm instances");
