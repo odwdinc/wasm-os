@@ -58,16 +58,15 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         vga::init(buf, info);
     }
 
-    fs::register_file("hello.wasm",  wasm::engine::HELLO_WASM);
-    fs::register_file("greet.wasm",  wasm::engine::GREET_WASM);
-    fs::register_file("fib.wasm",    wasm::engine::FIB_WASM);
-    fs::register_file("primes.wasm", wasm::engine::PRIMES_WASM);
-    fs::register_file("collatz.wasm", wasm::engine::COLLATZ_WASM);
-    fs::register_file("counter.wasm", wasm::engine::COUNTER_WASM);
-    
+    // Mount the WasmFS boot image embedded at compile time by build.rs /
+    // tools/pack-fs.sh.  This replaces the individual register_file() calls.
+    static FS_IMG: &[u8] = include_bytes!("../../fs.img");
+    fs::wasmfs::mount_from_image(FS_IMG);
 
-    if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, "main", &[]) {
-        println!("wasm boot error: {}", e.as_str());
+    if let Some(hello) = fs::find_file("hello.wasm") {
+        if let Err(e) = wasm::engine::run(hello, "main", &[]) {
+            println!("wasm boot error: {}", e.as_str());
+        }
     }
 
     println!("Type 'help' for commands.");

@@ -275,9 +275,9 @@ rebuilding the kernel.
 
 ### 3. Boot Image Tool
 
-* [ ] Host-side tool (`tools/pack-fs.sh`) packs files into a filesystem image
-* [ ] QEMU loads image as a second drive (`-drive file=fs.img`)
-* [ ] Kernel mounts at boot: reads directory, registers files
+* [x] Host-side tool (`tools/pack-fs.sh`) packs files into a filesystem image
+* [x] QEMU loads image as a second drive (`-drive file=fs.img`)
+* [x] Kernel mounts at boot: reads directory, registers files
 
 ---
 

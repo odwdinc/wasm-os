@@ -56,11 +56,18 @@ if ! command -v qemu-system-x86_64 &>/dev/null; then
     exit 1
 fi
 
+FS_IMG="$ROOT/fs.img"
+FS_DRIVE=""
+if [ -f "$FS_IMG" ]; then
+    FS_DRIVE="-drive format=raw,file=$FS_IMG,if=ide,index=1,media=disk"
+fi
+
 echo "booting $IMG  [profile=$PROFILE${DISPLAY_ARGS:+, headless}]..."
 echo "serial → stdio  (Ctrl-A X to quit)"
 # shellcheck disable=SC2086
 qemu-system-x86_64 \
     -drive format=raw,file="$IMG" \
+    $FS_DRIVE \
     -m 512M \
     -serial mon:stdio \
     -no-reboot \

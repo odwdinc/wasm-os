@@ -15,12 +15,17 @@ if [ "$PROFILE" = "release" ]; then
     CARGO_FLAGS+=(--release)
 fi
 
-# 1. Compile userland .wat → .wasm (kernel embeds these at compile time).
-echo "[1/3] compiling userland modules..."
+# 1. Compile userland .wat → .wasm.
+echo "[1/4] compiling userland modules..."
 "$SCRIPT_DIR/wasm-pack.sh"
 
-# 2. Build the kernel for x86_64-unknown-none.
-echo "[2/3] building kernel (profile: $PROFILE)..."
+# 2. Pack .wasm files into fs.img (WasmFS format — embedded by the kernel).
+echo "[2/4] packing filesystem image..."
+mapfile -d '' WASM_FILES < <(find "$ROOT/userland" -name "*.wasm" -print0 | sort -z)
+"$SCRIPT_DIR/pack-fs.sh" "${WASM_FILES[@]}"
+
+# 3. Build the kernel for x86_64-unknown-none.
+echo "[3/4] building kernel (profile: $PROFILE)..."
 cargo build --package kernel "${CARGO_FLAGS[@]}"
 
 KERNEL="target/x86_64-unknown-none/$PROFILE/kernel"
@@ -29,8 +34,8 @@ if [ ! -f "$KERNEL" ]; then
     exit 1
 fi
 
-# 3. Run the host-side runner to wrap the ELF into a BIOS disk image.
-echo "[3/3] creating disk image..."
+# 4. Run the host-side runner to wrap the ELF into a BIOS disk image.
+echo "[4/4] creating disk image..."
 HOST=$(rustc -vV 2>/dev/null | grep '^host:' | sed 's/host: //')
 cargo run \
     --manifest-path runner/Cargo.toml \
@@ -38,4 +43,6 @@ cargo run \
     --quiet \
     -- "$KERNEL"
 
-echo "done. image: target/x86_64-unknown-none/$PROFILE/kernel-bios.img"
+echo "done."
+echo "  boot image : target/x86_64-unknown-none/$PROFILE/kernel-bios.img"
+echo "  fs image   : fs.img"

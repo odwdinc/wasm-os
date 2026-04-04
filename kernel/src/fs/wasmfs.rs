@@ -281,3 +281,36 @@ impl<D: BlockDevice> WasmFs<D> {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Boot mount
+// ---------------------------------------------------------------------------
+
+/// Parse a WasmFS image embedded as a `&'static [u8]` and register every
+/// valid file into the kernel's in-memory file table (`crate::fs::register_file`).
+///
+/// Called once at boot from `kernel_main` after the image has been embedded
+/// via `include_bytes!`.  The data slices handed to `register_file` are
+/// sub-slices of `img` and therefore also `'static`.
+pub fn mount_from_image(img: &'static [u8]) {
+    use super::block::BLOCK_SIZE;
+
+    if img.len() < BLOCK_SIZE {
+        return; // image too small — treat as empty
+    }
+
+    for i in 0..DIR_ENTRIES_PER_BLOCK {
+        let off = i * DIR_ENTRY_SIZE;
+        let mut b = [0u8; DIR_ENTRY_SIZE];
+        b.copy_from_slice(&img[off..off + DIR_ENTRY_SIZE]);
+        let entry = DirEntry::from_bytes(&b);
+
+        if entry.is_valid() {
+            let start = entry.start_block as usize * BLOCK_SIZE;
+            let end   = start + entry.size as usize;
+            if end <= img.len() {
+                super::register_file(entry.name_str(), &img[start..end]);
+            }
+        }
+    }
+}

@@ -500,11 +500,3 @@ pub fn run(bytes: &'static [u8], entry: &str, args: &[i32]) -> Result<Option<i64
     final_result
 }
 
-// ── Embedded userland modules ─────────────────────────────────────────────────
-
-pub const HELLO_WASM:  &[u8] = include_bytes!("../../../userland/hello/hello.wasm");
-pub const GREET_WASM:  &[u8] = include_bytes!("../../../userland/greet/greet.wasm");
-pub const FIB_WASM:    &[u8] = include_bytes!("../../../userland/fib/fib.wasm");
-pub const PRIMES_WASM: &[u8] = include_bytes!("../../../userland/primes/primes.wasm");
-pub const COLLATZ_WASM: &[u8] = include_bytes!("../../../userland/collatz/collatz.wasm");
-pub const COUNTER_WASM: &[u8] = include_bytes!("../../../userland/counter/counter.wasm");
