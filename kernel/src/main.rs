@@ -72,7 +72,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
 
     println!("Type 'help' for commands.");
-    keyboard::run_loop();
+    scheduler::run();
 }
 
 #[panic_handler]

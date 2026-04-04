@@ -222,8 +222,8 @@ Long-running modules don't freeze the terminal.
 
 ### 5. Shell as a Task
 
-* [ ] Move `keyboard::run_loop()` into its own task
-* [ ] Shell and WASM instances share the CPU via the scheduler
+* [x] Move `keyboard::run_loop()` into its own task
+* [x] Shell and WASM instances share the CPU via the scheduler
 
 ---
 
