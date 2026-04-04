@@ -10,9 +10,22 @@
 //!   `run(bytes, entry, args)`         — convenience: spawn + call + destroy
 
 use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicU32, Ordering};
 use super::loader::{load, find_export, read_memory_min_pages, for_each_func_import,
                     LoadError, read_u32_leb128};
 use super::interp::{Interpreter, InterpError, HostFn, MAX_FUNCS, STACK_DEPTH, read_i32_leb128};
+
+// ── Cooperative yield channel ─────────────────────────────────────────────────
+
+/// Set by `host_sleep_ms` before returning `Yielded`; consumed by `task_step`.
+/// Zero means plain yield (no sleep delay).
+static PENDING_SLEEP_MS: AtomicU32 = AtomicU32::new(0);
+
+/// Take the pending sleep duration (ms) set by the last `sleep_ms` call, if any.
+/// Resets the global to 0. Called by `task::task_step` after a `Yielded` result.
+pub fn take_pending_sleep_ms() -> u32 {
+    PENDING_SLEEP_MS.swap(0, Ordering::Relaxed)
+}
 
 // ── Capacity limits ───────────────────────────────────────────────────────────
 
@@ -118,11 +131,27 @@ fn host_print_int(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Resul
     Ok(())
 }
 
+/// `yield()` — cooperatively surrender the CPU to the scheduler.
+fn host_yield(_vstack: &mut [i64], _vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    Err(InterpError::Yielded)
+}
+
+/// `sleep_ms(ms: i32)` — yield for at least `ms` milliseconds.
+fn host_sleep_ms(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let ms = vstack[*vsp - 1] as i32;
+    *vsp -= 1;
+    PENDING_SLEEP_MS.store(ms.max(0) as u32, Ordering::Relaxed);
+    Err(InterpError::Yielded)
+}
+
 /// Register the kernel's built-in host functions.  Call once at boot before
 /// running any module.
 pub fn init_host_fns() {
     register_host("env", "print",     host_print);
     register_host("env", "print_int", host_print_int);
+    register_host("env", "yield",     host_yield);
+    register_host("env", "sleep_ms",  host_sleep_ms);
 }
 
 /// Print an i32 as decimal followed by a newline, without heap allocation.
@@ -453,11 +482,22 @@ pub fn resume_task(handle: usize) -> Result<TaskResult, RunError> {
 // ── Convenience wrapper ───────────────────────────────────────────────────────
 
 /// Spawn an instance, call `entry`, destroy it, return the result.
+/// Modules that call `yield` or `sleep_ms` are run to completion synchronously
+/// (yields are treated as no-ops in this path).
 pub fn run(bytes: &'static [u8], entry: &str, args: &[i32]) -> Result<Option<i64>, RunError> {
     let handle = spawn("", bytes)?;
-    let result = call_handle(handle, entry, args);
+    let mut result = start_task(handle, entry, args);
+    // Drain cooperative yields: keep resuming until completion or a real error.
+    while let Ok(TaskResult::Yielded) = result {
+        result = resume_task(handle);
+    }
+    let final_result = match result {
+        Ok(TaskResult::Completed(v)) => Ok(v),
+        Ok(TaskResult::Yielded)      => unreachable!(),
+        Err(e)                       => Err(e),
+    };
     destroy(handle);
-    result
+    final_result
 }
 
 // ── Embedded userland modules ─────────────────────────────────────────────────
@@ -467,3 +507,4 @@ pub const GREET_WASM:  &[u8] = include_bytes!("../../../userland/greet/greet.was
 pub const FIB_WASM:    &[u8] = include_bytes!("../../../userland/fib/fib.wasm");
 pub const PRIMES_WASM: &[u8] = include_bytes!("../../../userland/primes/primes.wasm");
 pub const COLLATZ_WASM: &[u8] = include_bytes!("../../../userland/collatz/collatz.wasm");
+pub const COUNTER_WASM: &[u8] = include_bytes!("../../../userland/counter/counter.wasm");

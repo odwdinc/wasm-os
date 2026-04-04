@@ -206,17 +206,17 @@ Long-running modules don't freeze the terminal.
 
 ### 3. Round-Robin Scheduler
 
-* [ ] On timer interrupt: save current task state, advance to next ready task
-* [ ] Resume task from saved state
-* [ ] Idle task when queue is empty (halts with `hlt`)
+* [x] On timer interrupt: save current task state, advance to next ready task
+* [x] Resume task from saved state
+* [x] Idle task when queue is empty (halts with `hlt`)
 
 ---
 
 ### 4. Yield Host Function
 
-* [ ] `host_yield()` — WASM calls this to voluntarily give up the CPU
-* [ ] Register as `"env"."yield"` in host function registry
-* [ ] `sleep_ms(ms: i32)` — yield for at least N ticks
+* [x] `host_yield()` — WASM calls this to voluntarily give up the CPU
+* [x] Register as `"env"."yield"` in host function registry
+* [x] `sleep_ms(ms: i32)` — yield for at least N ticks
 
 ---
 

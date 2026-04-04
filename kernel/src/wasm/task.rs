@@ -23,6 +23,8 @@ pub enum TaskState {
     Running,
     /// Called `host_yield`; waiting for the scheduler to resume it.
     Suspended,
+    /// Called `sleep_ms`; will resume once the tick counter reaches the stored wake tick.
+    Sleeping(u64),
     /// Ran to completion or was killed.
     Done,
 }
@@ -85,11 +87,25 @@ pub fn task_state(id: usize) -> Option<TaskState> {
     unsafe { TASK_QUEUE[id].as_ref().map(|t| t.state) }
 }
 
-/// Step one task: start it (if Ready) or resume it (if Suspended).
+/// Step one task: start it (if Ready) or resume it (if Ready/Suspended/awake Sleeping).
 /// Updates the task's state and returns what the task did.
-/// Returns `None` if the slot is empty or the task is not runnable.
+/// Returns `None` if the slot is empty or the task is not yet runnable.
 pub fn task_step(id: usize) -> Option<Result<TaskResult, RunError>> {
     if id >= MAX_TASKS { return None; }
+
+    // Wake a sleeping task if its timer has elapsed.
+    unsafe {
+        if let Some(t) = TASK_QUEUE[id].as_mut() {
+            if let TaskState::Sleeping(wake) = t.state {
+                if crate::drivers::pit::ticks() >= wake {
+                    t.state = TaskState::Suspended;
+                } else {
+                    return None; // still sleeping
+                }
+            }
+        }
+    }
+
     let (state, instance) = unsafe {
         let t = TASK_QUEUE[id].as_mut()?;
         (t.state, t.instance)
@@ -116,7 +132,15 @@ pub fn task_step(id: usize) -> Option<Result<TaskResult, RunError>> {
                     TASK_QUEUE[id] = None;
                 }
                 Ok(TaskResult::Yielded) => {
-                    t.state = TaskState::Suspended;
+                    let sleep_ms = engine::take_pending_sleep_ms();
+                    if sleep_ms > 0 {
+                        // Convert ms → ticks (100 Hz → 1 tick = 10 ms; round up).
+                        let wake = crate::drivers::pit::ticks()
+                            + (sleep_ms as u64 + 9) / 10;
+                        t.state = TaskState::Sleeping(wake);
+                    } else {
+                        t.state = TaskState::Suspended;
+                    }
                 }
                 Err(_) => {
                     engine::destroy(t.instance);
@@ -127,6 +151,23 @@ pub fn task_step(id: usize) -> Option<Result<TaskResult, RunError>> {
     }
 
     Some(result)
+}
+
+/// True if task `id` exists and is ready to run right now.
+pub fn is_task_runnable(id: usize) -> bool {
+    if id >= MAX_TASKS { return false; }
+    unsafe {
+        match TASK_QUEUE[id].as_ref().map(|t| t.state) {
+            Some(TaskState::Ready) | Some(TaskState::Suspended) => true,
+            Some(TaskState::Sleeping(wake)) => crate::drivers::pit::ticks() >= wake,
+            _ => false,
+        }
+    }
+}
+
+/// True if any task slot is occupied (including sleeping tasks).
+pub fn has_any_task() -> bool {
+    unsafe { TASK_QUEUE.iter().any(|t| t.is_some()) }
 }
 
 /// Call `f(id, name, state)` for every non-empty slot.

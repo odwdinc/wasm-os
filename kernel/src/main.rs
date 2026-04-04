@@ -5,6 +5,7 @@ mod drivers;
 mod fs;
 mod interrupts;
 mod keyboard;
+mod scheduler;
 mod shell;
 mod vga;
 mod wasm;
@@ -63,6 +64,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     fs::register_file("fib.wasm",    wasm::engine::FIB_WASM);
     fs::register_file("primes.wasm", wasm::engine::PRIMES_WASM);
     fs::register_file("collatz.wasm", wasm::engine::COLLATZ_WASM);
+    fs::register_file("counter.wasm", wasm::engine::COUNTER_WASM);
+    
 
     if let Err(e) = wasm::engine::run(wasm::engine::HELLO_WASM, "main", &[]) {
         println!("wasm boot error: {}", e.as_str());

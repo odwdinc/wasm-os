@@ -221,7 +221,11 @@ fn cmd_run(argv: &[&str]) {
         Ok(h)  => h,
         Err(e) => { crate::println!("error: {}", e.as_str()); return; }
     };
-    let result = crate::wasm::engine::call_handle(handle, "main", &wasm_args[..arg_count]);
+    // Run to completion, treating yields as no-ops (synchronous path).
+    let mut result = crate::wasm::engine::start_task(handle, "main", &wasm_args[..arg_count]);
+    while let Ok(crate::wasm::engine::TaskResult::Yielded) = result {
+        result = crate::wasm::engine::resume_task(handle);
+    }
     crate::wasm::engine::destroy(handle);
     if let Err(e) = result {
         crate::println!("error: {}", e.as_str());
@@ -267,10 +271,11 @@ fn cmd_tasks() {
     let mut any = false;
     crate::wasm::task::for_each_task(|id, name, state| {
         let s = match state {
-            crate::wasm::task::TaskState::Ready     => "ready",
-            crate::wasm::task::TaskState::Running   => "running",
-            crate::wasm::task::TaskState::Suspended => "suspended",
-            crate::wasm::task::TaskState::Done      => "done",
+            crate::wasm::task::TaskState::Ready        => "ready",
+            crate::wasm::task::TaskState::Running      => "running",
+            crate::wasm::task::TaskState::Suspended    => "suspended",
+            crate::wasm::task::TaskState::Sleeping(_)  => "sleeping",
+            crate::wasm::task::TaskState::Done         => "done",
         };
         crate::println!("[{}] {}  ({})", id, name, s);
         any = true;

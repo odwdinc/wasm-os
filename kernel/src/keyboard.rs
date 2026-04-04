@@ -35,7 +35,7 @@ pub fn run_loop() -> ! {
         } else if let Some(k) = try_next_key() {
             k
         } else {
-            core::hint::spin_loop();
+            crate::scheduler::tick();
             continue;
         };
 
