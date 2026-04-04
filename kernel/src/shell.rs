@@ -127,7 +127,7 @@ fn cmd_help() {
     crate::println!("  history            show command history");
     crate::println!("  clear              clear the screen");
     crate::println!("  ls                 list registered .wasm files");
-    crate::println!("  info <name>        show module info");
+    crate::println!("  info [name]        show module info, or tick count if no name");
     crate::println!("  run <name>         execute a .wasm module");
     crate::println!("  ps                 list running wasm instances");
 }
@@ -166,7 +166,8 @@ fn cmd_ls() {
 
 fn cmd_info(name: &str) {
     if name.is_empty() {
-        crate::println!("usage: info <name>");
+        let t = crate::drivers::pit::ticks();
+        crate::println!("ticks: {}  (~{} s)", t, t / 100);
         return;
     }
     let data = match crate::fs::find_file(name) {

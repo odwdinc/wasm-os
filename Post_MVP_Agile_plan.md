@@ -189,9 +189,9 @@ Long-running modules don't freeze the terminal.
 
 ### 1. Hardware Timer
 
-* [ ] Configure PIT (8253) or APIC timer for periodic interrupt (e.g. 10ms)
-* [ ] Timer ISR increments a tick counter
-* [ ] Verify tick counter increments (print in `info` command)
+* [x] Configure PIT (8253) or APIC timer for periodic interrupt (e.g. 10ms)
+* [x] Timer ISR increments a tick counter
+* [x] Verify tick counter increments (print in `info` command)
 
 ---
 

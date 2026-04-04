@@ -3,6 +3,7 @@
 
 mod drivers;
 mod fs;
+mod interrupts;
 mod keyboard;
 mod shell;
 mod vga;
@@ -48,6 +49,7 @@ macro_rules! println {
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     drivers::serial::init();
+    interrupts::init();
     wasm::engine::init_host_fns();
 
     if let Some(fb) = boot_info.framebuffer.as_mut() {
