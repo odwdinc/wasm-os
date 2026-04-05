@@ -28,6 +28,15 @@ const NONE_FILE: Option<File> = None;
 static mut FILE_TABLE: [Option<File>; MAX_FILES] = [NONE_FILE; MAX_FILES];
 static mut FILE_COUNT: usize = 0;
 
+/// Zero-initialise the file table.  Call once at boot before any register/find.
+/// Needed because the bootloader may not zero BSS for all physical pages.
+pub fn init() {
+    unsafe {
+        FILE_TABLE = [NONE_FILE; MAX_FILES];
+        FILE_COUNT = 0;
+    }
+}
+
 /// Register a named file.  Silently does nothing if the table is full.
 /// `name` need not be `'static`; the bytes are copied into the static table.
 pub fn register_file(name: &str, data: &'static [u8]) {
@@ -115,6 +124,35 @@ pub fn alloc_write_buf(data: &[u8]) -> Option<&'static [u8]> {
         WRITE_POOL_NEXT += 1;
         WRITE_POOL[slot][..data.len()].copy_from_slice(data);
         Some(&WRITE_POOL[slot][..data.len()])
+    }
+}
+
+// ── Static pool for files loaded from a virtio-blk disk at boot ─────────────
+//
+// Each slot is 8 KiB — large enough for typical WASM demo modules.
+// Slots are allocated once and never freed (single-session lifetime).
+
+pub const DISK_SLOT_SIZE: usize = 8192;
+const DISK_SLOTS: usize = 8;
+
+static mut DISK_POOL: [[u8; DISK_SLOT_SIZE]; DISK_SLOTS] =
+    [[0u8; DISK_SLOT_SIZE]; DISK_SLOTS];
+static mut DISK_POOL_NEXT: usize = 0;
+
+/// Claim a slot of exactly `len` bytes from the disk pool.
+/// Returns a raw pointer to the slot's start, or `None` if the pool is
+/// exhausted or `len` exceeds `DISK_SLOT_SIZE`.
+pub fn alloc_disk_slot(len: usize) -> Option<*mut u8> {
+    if len > DISK_SLOT_SIZE {
+        return None;
+    }
+    unsafe {
+        if DISK_POOL_NEXT >= DISK_SLOTS {
+            return None;
+        }
+        let idx = DISK_POOL_NEXT;
+        DISK_POOL_NEXT += 1;
+        Some(DISK_POOL[idx].as_mut_ptr())
     }
 }
 

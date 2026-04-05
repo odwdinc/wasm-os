@@ -260,7 +260,7 @@ rebuilding the kernel.
 
 * [x] `BlockDevice` trait: `read_block(lba, buf)`, `write_block(lba, buf)`
 * [x] Ramdisk implementation: embedded `static mut` byte array, block-addressed
-* [ ] QEMU virtio-blk driver (stretch — enables true disk persistence)
+* [x] QEMU virtio-blk driver (stretch — enables true disk persistence)
 
 ---
 

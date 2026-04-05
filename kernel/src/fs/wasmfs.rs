@@ -284,7 +284,61 @@ impl<D: BlockDevice> WasmFs<D> {
 }
 
 // ---------------------------------------------------------------------------
-// Boot mount
+// Boot mount — from block device (virtio-blk)
+// ---------------------------------------------------------------------------
+
+/// Read every valid WasmFS directory entry from `dev`, load the file data
+/// into the static disk-file pool, and register each file in the in-memory
+/// table.  Returns the number of files successfully mounted.
+///
+/// This is the virtio-blk path: files live on the QEMU `-drive if=virtio`
+/// disk image and survive across reboots.
+pub fn mount_from_blk<D: BlockDevice>(dev: D) -> usize {
+    let mut wfs = WasmFs::new(dev);
+    let dir = wfs.read_dir_block();
+    let mut count = 0usize;
+
+    for i in 0..DIR_ENTRIES_PER_BLOCK {
+        let e = WasmFs::<D>::read_entry(&dir, i);
+        if !e.is_valid() {
+            continue;
+        }
+        let name = e.name_str();
+        let size = e.size as usize;
+        if size == 0 {
+            continue;
+        }
+
+        // Allocate a 'static slot for this file's bytes.
+        let ptr = match super::alloc_disk_slot(size) {
+            Some(p) => p,
+            None    => continue, // pool full — skip remaining files
+        };
+
+        // Open the file and stream it block-by-block into the slot.
+        let fd = match wfs.fs_open(name) {
+            Some(f) => f,
+            None    => continue,
+        };
+        // Safety: ptr is valid, unique, and 'static (backed by DISK_POOL).
+        let write_slice = unsafe { core::slice::from_raw_parts_mut(ptr, size) };
+        let n = wfs.fs_read(fd, write_slice, size);
+        wfs.fs_close(fd);
+
+        if n != size {
+            continue; // partial read — skip
+        }
+
+        // Register the now-filled slot as an immutable 'static slice.
+        let read_slice: &'static [u8] = unsafe { core::slice::from_raw_parts(ptr, size) };
+        super::register_file(name, read_slice);
+        count += 1;
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// Boot mount — from embedded image
 // ---------------------------------------------------------------------------
 
 /// Parse a WasmFS image embedded as a `&'static [u8]` and register every

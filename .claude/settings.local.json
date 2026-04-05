@@ -3,7 +3,10 @@
     "allow": [
       "Bash(xargs cat:*)",
       "Bash(ls /work/kernel/src/keyboard*)",
-      "Bash(chmod +x:*)"
+      "Bash(chmod +x:*)",
+      "Bash(cat /work/scripts/*.sh)",
+      "Bash(cat /work/tools/*.sh)",
+      "Bash(cat /work/kernel/src/memory/*.rs)"
     ]
   }
 }

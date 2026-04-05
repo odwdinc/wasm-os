@@ -59,7 +59,9 @@ fi
 FS_IMG="$ROOT/fs.img"
 FS_DRIVE=""
 if [ -f "$FS_IMG" ]; then
-    FS_DRIVE="-drive format=raw,file=$FS_IMG,if=ide,index=1,media=disk"
+    # virtio-blk: kernel reads blocks via virtqueue (legacy PCI transport).
+    # True disk persistence — kernel detects at runtime via PCI scan.
+    FS_DRIVE="-drive format=raw,file=$FS_IMG,if=virtio"
 fi
 
 echo "booting $IMG  [profile=$PROFILE${DISPLAY_ARGS:+, headless}]..."
@@ -72,4 +74,5 @@ qemu-system-x86_64 \
     -serial mon:stdio \
     -no-reboot \
     -no-shutdown \
+    -d guest_errors \
     $DISPLAY_ARGS

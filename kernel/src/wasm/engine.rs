@@ -148,6 +148,11 @@ fn host_sleep_ms(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result
 /// Register the kernel's built-in host functions.  Call once at boot before
 /// running any module.
 pub fn init_host_fns() {
+    // BSS may not be zeroed by the bootloader — reset the registry explicitly.
+    unsafe {
+        HOST_COUNT    = 0;
+        HOST_REGISTRY = [EMPTY_ENTRY; MAX_HOST_FUNCS];
+    }
     register_host("env", "print",     host_print);
     register_host("env", "print_int", host_print_int);
     register_host("env", "yield",     host_yield);
