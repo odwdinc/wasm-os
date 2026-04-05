@@ -1,9 +1,14 @@
+pub mod cat;
+pub mod cd;
 pub mod clear;
+pub mod df;
 pub mod echo;
+pub mod edit;
 pub mod help;
 pub mod history;
 pub mod info;
 pub mod ls;
+pub mod mkdir;
 pub mod ps;
 pub mod rm;
 pub mod run;

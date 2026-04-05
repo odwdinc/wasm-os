@@ -15,6 +15,27 @@ use super::loader::{load, find_export, read_memory_min_pages, for_each_func_impo
                     LoadError, read_u32_leb128};
 use super::interp::{Interpreter, InterpError, HostFn, MAX_FUNCS, STACK_DEPTH, read_i32_leb128};
 
+// ── Args buffer ──────────────────────────────────────────────────────────────
+//
+// Holds the raw argument string for the currently-running module so that
+// `args_get` can copy it into linear memory.  Set by the shell `run` command
+// before spawning; cleared to empty at the start of each spawn.
+
+const ARGS_CAP: usize = 128;
+static mut ARGS_BUF: [u8; ARGS_CAP] = [0u8; ARGS_CAP];
+static mut ARGS_LEN: usize = 0;
+
+/// Store `args` so the next module can read them via `args_get`.
+/// Accepts the raw space-joined argument string (everything after the module name).
+pub fn set_args(args: &str) {
+    unsafe {
+        let bytes = args.as_bytes();
+        let len = bytes.len().min(ARGS_CAP);
+        ARGS_BUF[..len].copy_from_slice(&bytes[..len]);
+        ARGS_LEN = len;
+    }
+}
+
 // ── Cooperative yield channel ─────────────────────────────────────────────────
 
 /// Set by `host_sleep_ms` before returning `Yielded`; consumed by `task_step`.
@@ -46,7 +67,7 @@ static mut SLOT_MEM: [[u8; MAX_MEM_PAGES as usize * PAGE_SIZE]; MAX_INSTANCES] =
 // ── Host function registry ────────────────────────────────────────────────────
 
 /// Maximum number of host functions that can be registered.
-pub const MAX_HOST_FUNCS: usize = 16;
+pub const MAX_HOST_FUNCS: usize = 32;
 
 #[derive(Clone, Copy)]
 struct HostEntry {
@@ -145,6 +166,252 @@ fn host_sleep_ms(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result
     Err(InterpError::Yielded)
 }
 
+/// `print_i64(n: i64)` — print a signed 64-bit integer followed by a newline.
+fn host_print_i64(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let n = vstack[*vsp - 1];
+    *vsp -= 1;
+    fmt_i64(n);
+    Ok(())
+}
+
+/// `print_char(c: i32)` — print a single ASCII character (low byte of c).
+fn host_print_char(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let c = (vstack[*vsp - 1] & 0xFF) as u8;
+    *vsp -= 1;
+    if let Ok(s) = core::str::from_utf8(core::slice::from_ref(&c)) {
+        crate::print!("{}", s);
+    }
+    Ok(())
+}
+
+/// `print_hex(n: i32)` — print i32 as zero-padded 8-digit hex (e.g. `0x0000002A`).
+fn host_print_hex(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let n = vstack[*vsp - 1] as u32;
+    *vsp -= 1;
+    fmt_hex(n);
+    Ok(())
+}
+
+/// `uptime_ms() → i32` — milliseconds since boot (saturates at i32::MAX ~25 days).
+fn host_uptime_ms(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp >= STACK_DEPTH { return Err(InterpError::StackOverflow); }
+    // PIT fires at ~100 Hz → each tick ≈ 10 ms.
+    let ms = crate::drivers::pit::ticks().saturating_mul(10).min(i32::MAX as u64) as i64;
+    vstack[*vsp] = ms;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `exit(code: i32)` — terminate the module cleanly (treated as normal return).
+fn host_exit(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    *vsp -= 1; // consume the code; we don't use it
+    Err(InterpError::Exited)
+}
+
+/// `read_char() → i32` — block until a printable key is pressed; returns its ASCII code.
+/// Returns 10 (newline) for Enter, -1 on unrecognised key.
+fn host_read_char(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp >= STACK_DEPTH { return Err(InterpError::StackOverflow); }
+    use crate::drivers::keyboard::{next_key, Key};
+    let code: i32 = loop {
+        match next_key() {
+            Key::Char(c) => break c as i32,
+            Key::Enter   => break 10,
+            Key::Backspace | Key::Unknown => continue,
+        }
+    };
+    vstack[*vsp] = code as i64;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `read_line(ptr: i32, cap: i32) → i32`
+/// Read a line of keyboard input (terminated by Enter) into linear memory.
+/// Characters are echoed to the screen. Backspace removes the last character.
+/// Returns the number of bytes written (not including any terminator).
+/// Returns -1 if `ptr+cap` exceeds memory bounds.
+fn host_read_line(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 2 { return Err(InterpError::StackUnderflow); }
+    let cap = vstack[*vsp - 1] as usize;
+    let ptr = vstack[*vsp - 2] as usize;
+    *vsp -= 2;
+
+    let end = ptr.saturating_add(cap);
+    if end > mem.len() {
+        vstack[*vsp] = -1i64;
+        *vsp += 1;
+        return Ok(());
+    }
+
+    use crate::drivers::keyboard::{next_key, Key};
+    let mut len = 0usize;
+    loop {
+        match next_key() {
+            Key::Enter => {
+                crate::println!();
+                break;
+            }
+            Key::Backspace => {
+                if len > 0 {
+                    len -= 1;
+                    // Overwrite the last char on screen with a space.
+                    crate::print!("\x08 \x08");
+                }
+            }
+            Key::Char(c) if (c as u32) < 128 => {
+                if len < cap {
+                    mem[ptr + len] = c as u8;
+                    len += 1;
+                    crate::print!("{}", c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    vstack[*vsp] = len as i64;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `fs_read(name_ptr: i32, name_len: i32, buf_ptr: i32, buf_cap: i32) → i32`
+/// Copy a file from the in-memory file table into linear memory.
+/// Returns the number of bytes written, or -1 if the file is not found or the
+/// buffer is too small / out of bounds.
+fn host_fs_read(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 4 { return Err(InterpError::StackUnderflow); }
+    let buf_cap  = vstack[*vsp - 1] as usize;
+    let buf_ptr  = vstack[*vsp - 2] as usize;
+    let name_len = vstack[*vsp - 3] as usize;
+    let name_ptr = vstack[*vsp - 4] as usize;
+    *vsp -= 4;
+
+    let result: i64 = 'done: {
+        // Validate name slice.
+        let name_end = name_ptr.saturating_add(name_len);
+        if name_end > mem.len() { break 'done -1; }
+        let name = match core::str::from_utf8(&mem[name_ptr..name_end]) {
+            Ok(s) => s, Err(_) => break 'done -1,
+        };
+        // Look up the file.
+        let data = match crate::fs::find_file(name) {
+            Some(d) => d, None => break 'done -1,
+        };
+        // Validate destination buffer.
+        let buf_end = buf_ptr.saturating_add(buf_cap);
+        if buf_end > mem.len() || data.len() > buf_cap { break 'done -1; }
+        mem[buf_ptr..buf_ptr + data.len()].copy_from_slice(data);
+        data.len() as i64
+    };
+
+    vstack[*vsp] = result;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `fs_write(name_ptr: i32, name_len: i32, buf_ptr: i32, buf_len: i32) → i32`
+/// Write bytes from linear memory to the filesystem (in-memory table + FAT).
+/// Returns 0 on success, -1 on failure (bad pointers, write pool exhausted, etc.).
+fn host_fs_write(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 4 { return Err(InterpError::StackUnderflow); }
+    let buf_len  = vstack[*vsp - 1] as usize;
+    let buf_ptr  = vstack[*vsp - 2] as usize;
+    let name_len = vstack[*vsp - 3] as usize;
+    let name_ptr = vstack[*vsp - 4] as usize;
+    *vsp -= 4;
+
+    let result: i64 = 'done: {
+        let name_end = name_ptr.saturating_add(name_len);
+        let buf_end  = buf_ptr.saturating_add(buf_len);
+        if name_end > mem.len() || buf_end > mem.len() { break 'done -1; }
+
+        // Copy name out of (mutable) linear memory before we need to borrow `mem`.
+        let mut name_buf = [0u8; 64];
+        let nlen = name_len.min(64);
+        name_buf[..nlen].copy_from_slice(&mem[name_ptr..name_ptr + nlen]);
+        let name = match core::str::from_utf8(&name_buf[..nlen]) {
+            Ok(s) => s, Err(_) => break 'done -1,
+        };
+
+        // Allocate a static write-pool slot and copy the data into it.
+        let data = &mem[buf_ptr..buf_ptr + buf_len];
+        let static_data = match crate::fs::alloc_write_buf(data) {
+            Some(s) => s, None => break 'done -1,
+        };
+
+        // Remove any existing entry so the new one takes precedence.
+        crate::fs::remove_file(name);
+        crate::fs::register_file(name, static_data);
+
+        // Best-effort flush to FAT (ignore errors — in-memory table is already updated).
+        crate::fs::fat::fat_write_file(name, static_data);
+
+        0i64
+    };
+
+    vstack[*vsp] = result;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `args_get(buf_ptr: i32, buf_cap: i32) → i32`
+/// Copy the current module's argument string into linear memory.
+/// Returns the number of bytes written, or -1 if the buffer is too small / out of bounds.
+/// The string is space-separated (e.g. `"10 hello"` for `run mod.wasm 10 hello`).
+fn host_args_get(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 2 { return Err(InterpError::StackUnderflow); }
+    let cap = vstack[*vsp - 1] as usize;
+    let ptr = vstack[*vsp - 2] as usize;
+    *vsp -= 2;
+
+    let result: i64 = unsafe {
+        let len = ARGS_LEN;
+        let end = ptr.saturating_add(len);
+        if end > mem.len() || len > cap {
+            -1
+        } else {
+            mem[ptr..ptr + len].copy_from_slice(&ARGS_BUF[..len]);
+            len as i64
+        }
+    };
+
+    vstack[*vsp] = result;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `fs_size(name_ptr: i32, name_len: i32) → i32`
+/// Return the byte length of a file in the in-memory table, or -1 if not found.
+fn host_fs_size(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 2 { return Err(InterpError::StackUnderflow); }
+    let name_len = vstack[*vsp - 1] as usize;
+    let name_ptr = vstack[*vsp - 2] as usize;
+    *vsp -= 2;
+
+    let result: i64 = {
+        let name_end = name_ptr.saturating_add(name_len);
+        if name_end > mem.len() {
+            -1
+        } else {
+            match core::str::from_utf8(&mem[name_ptr..name_end]) {
+                Ok(name) => match crate::fs::find_file(name) {
+                    Some(data) => data.len() as i64,
+                    None       => -1,
+                },
+                Err(_) => -1,
+            }
+        }
+    };
+
+    vstack[*vsp] = result;
+    *vsp += 1;
+    Ok(())
+}
+
 /// Register the kernel's built-in host functions.  Call once at boot before
 /// running any module.
 pub fn init_host_fns() {
@@ -153,10 +420,21 @@ pub fn init_host_fns() {
         HOST_COUNT    = 0;
         HOST_REGISTRY = [EMPTY_ENTRY; MAX_HOST_FUNCS];
     }
-    register_host("env", "print",     host_print);
-    register_host("env", "print_int", host_print_int);
-    register_host("env", "yield",     host_yield);
-    register_host("env", "sleep_ms",  host_sleep_ms);
+    register_host("env", "print",      host_print);
+    register_host("env", "print_int",  host_print_int);
+    register_host("env", "print_i64",  host_print_i64);
+    register_host("env", "print_char", host_print_char);
+    register_host("env", "print_hex",  host_print_hex);
+    register_host("env", "yield",      host_yield);
+    register_host("env", "sleep_ms",   host_sleep_ms);
+    register_host("env", "uptime_ms",  host_uptime_ms);
+    register_host("env", "exit",       host_exit);
+    register_host("env", "read_char",  host_read_char);
+    register_host("env", "read_line",  host_read_line);
+    register_host("env", "fs_read",    host_fs_read);
+    register_host("env", "fs_write",   host_fs_write);
+    register_host("env", "fs_size",    host_fs_size);
+    register_host("env", "args_get",   host_args_get);
 }
 
 /// Print an i32 as decimal followed by a newline, without heap allocation.
@@ -175,6 +453,40 @@ fn fmt_i32(n: i32) {
     }
     if negative { pos -= 1; buf[pos] = b'-'; }
     if let Ok(s) = core::str::from_utf8(&buf[pos..]) {
+        crate::println!("{}", s);
+    }
+}
+
+/// Print an i64 as decimal followed by a newline, without heap allocation.
+fn fmt_i64(n: i64) {
+    let mut buf = [0u8; 20];
+    let mut pos = buf.len();
+    let negative = n < 0;
+    let mut val: u64 = if n == i64::MIN { 9223372036854775808 }
+                       else if negative { (-n) as u64 }
+                       else             { n as u64 };
+    if val == 0 { crate::println!("0"); return; }
+    while val > 0 {
+        pos -= 1;
+        buf[pos] = b'0' + (val % 10) as u8;
+        val /= 10;
+    }
+    if negative { pos -= 1; buf[pos] = b'-'; }
+    if let Ok(s) = core::str::from_utf8(&buf[pos..]) {
+        crate::println!("{}", s);
+    }
+}
+
+/// Print a u32 as `0x` + 8 uppercase hex digits, followed by a newline.
+fn fmt_hex(n: u32) {
+    const HEX: &[u8] = b"0123456789ABCDEF";
+    let mut buf = [0u8; 10]; // "0x" + 8 digits
+    buf[0] = b'0';
+    buf[1] = b'x';
+    for i in 0..8 {
+        buf[9 - i] = HEX[((n >> (i * 4)) & 0xF) as usize];
+    }
+    if let Ok(s) = core::str::from_utf8(&buf) {
         crate::println!("{}", s);
     }
 }
@@ -433,6 +745,7 @@ pub fn start_task(handle: usize, entry: &str, args: &[i32]) -> Result<TaskResult
     match inst.interp.call(func_idx) {
         Ok(())                             => Ok(TaskResult::Completed(inst.interp.top())),
         Err(InterpError::Yielded)          => Ok(TaskResult::Yielded),
+        Err(InterpError::Exited)           => Ok(TaskResult::Completed(None)),
         Err(e)                             => Err(RunError::Interp(e)),
     }
 }
@@ -447,6 +760,7 @@ pub fn resume_task(handle: usize) -> Result<TaskResult, RunError> {
     match inst.interp.resume() {
         Ok(())                             => Ok(TaskResult::Completed(inst.interp.top())),
         Err(InterpError::Yielded)          => Ok(TaskResult::Yielded),
+        Err(InterpError::Exited)           => Ok(TaskResult::Completed(None)),
         Err(e)                             => Err(RunError::Interp(e)),
     }
 }

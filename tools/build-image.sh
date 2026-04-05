@@ -45,4 +45,4 @@ cargo run \
 
 echo "done."
 echo "  boot image : target/x86_64-unknown-none/$PROFILE/kernel-bios.img"
-echo "  fs image   : fs.img"
+echo "  fs image   : disk.img"

@@ -3,6 +3,31 @@
 pub mod input;
 mod commands;
 
+// ─── Working directory ────────────────────────────────────────────────────────
+
+const CWD_MAX: usize = 128;
+static mut CWD_BUF: [u8; CWD_MAX] = [0u8; CWD_MAX];
+static mut CWD_LEN: usize = 0; // 0 = uninitialised; lazily set to "/" on first use
+
+pub(crate) fn get_cwd() -> &'static str {
+    unsafe {
+        if CWD_LEN == 0 {
+            CWD_BUF[0] = b'/';
+            CWD_LEN = 1;
+        }
+        core::str::from_utf8(&CWD_BUF[..CWD_LEN]).unwrap_or("/")
+    }
+}
+
+pub(crate) fn set_cwd(path: &str) {
+    unsafe {
+        let bytes = path.as_bytes();
+        let len = bytes.len().min(CWD_MAX);
+        CWD_BUF[..len].copy_from_slice(&bytes[..len]);
+        CWD_LEN = len;
+    }
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_ARGS:    usize = 8;
@@ -87,6 +112,11 @@ pub fn run_command(line: &str) {
         "rm"        => commands::rm::run(&argv[1..argc]),
         "save"      => commands::save::run(),
         "write"     => commands::write::run(&argv[1..argc]),
+        "edit"      => commands::edit::run(&argv[1..argc]),
+        "cat"       => commands::cat::run(&argv[1..argc]),
+        "cd"        => commands::cd::run(&argv[1..argc]),
+        "mkdir"     => commands::mkdir::run(&argv[1..argc]),
+        "df"        => commands::df::run(),
         "info"      => commands::info::run(argv.get(1).copied().unwrap_or("")),
         "run"       => commands::run::run(&argv[1..argc]),
         "ps"        => commands::ps::run(),

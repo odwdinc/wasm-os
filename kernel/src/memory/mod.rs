@@ -1,3 +1,7 @@
+// memory/mod.rs — memory subsystem (allocator + virtual→physical translation)
+
+pub mod allocator;
+
 // memory/mod.rs — virtual→physical address translation via page-table walk
 //
 // The bootloader maps all physical memory starting at `phys_mem_offset`

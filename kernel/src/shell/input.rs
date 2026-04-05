@@ -77,3 +77,50 @@ pub fn poll_once(state: &mut ShellState) -> bool {
     }
     true
 }
+
+/// Reads a line into `buf` (max buf.len()), returns Some(&str) on Enter, None if interrupted.
+/// Supports Backspace (ASCII 0x08 or 0x7f)
+pub fn read_line(buf: &mut [u8]) -> Option<&str> {
+    let mut len = 0;
+
+    loop {
+        // Poll key
+        let key = if let Some(b) = crate::drivers::serial::read_byte() {
+            serial_byte_to_key(b)
+        } else if let Some(k) = try_next_key() {
+            k
+        } else {
+            continue; // nothing ready yet
+        };
+
+        match key {
+            Key::Enter => {
+                // Echo newline
+                crate::print!("\r\n");
+                // Return the current buffer as str
+                return core::str::from_utf8(&buf[..len]).ok();
+            }
+
+            Key::Backspace => {
+                // Backspace
+                if len > 0 {
+                    len -= 1;
+                    // Move cursor back, erase char visually
+                    crate::print!("\x08 \x08");
+                }
+            }
+
+            Key::Char(c) => {
+                if len < buf.len() {
+                    buf[len] = c as u8;
+                    len += 1;
+                    crate::print!("{}", c); // echo
+                } else {
+                    // Optional: beep or ignore
+                }
+            }
+            
+            Key::Unknown => {}
+        }
+    }
+}

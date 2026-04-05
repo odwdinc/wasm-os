@@ -1,17 +1,18 @@
-// fs/mod.rs — Filesystem subsystem (Sprint 3.1 + Sprint D)
+// fs/mod.rs — Filesystem subsystem
 //
-// mod.rs holds the in-memory file table (static, no-heap).
-// block.rs  — BlockDevice trait, Ramdisk, EmbeddedDisk
-// wasmfs.rs — WasmFS flat-filesystem format + mount_from_image
+// mod.rs   — in-memory file table (for wasm engine's 'static slice requirement)
+// block.rs — BlockDevice trait + Ramdisk/VirtioBlk impls
+// fat.rs   — FAT12/16/32 via rust-fatfs; BlockIo adapter; global FS handle
 
 pub mod block;
-pub mod wasmfs;
+pub mod fat;
+pub mod wasmfs; // kept for reference; no longer used at boot
 
-const MAX_FILES: usize = 16;
+const MAX_FILES: usize = 64;
 
 #[derive(Clone, Copy)]
 pub struct File {
-    name:     [u8; 32],
+    name:     [u8; 64],
     name_len: usize,
     pub data: &'static [u8],
 }
@@ -43,8 +44,8 @@ pub fn register_file(name: &str, data: &'static [u8]) {
     // Safety: single-core bare-metal, no preemption.
     unsafe {
         if FILE_COUNT < MAX_FILES {
-            let mut name_bytes = [0u8; 32];
-            let len = name.len().min(32);
+            let mut name_bytes = [0u8; 64];
+            let len = name.len().min(64);
             name_bytes[..len].copy_from_slice(&name.as_bytes()[..len]);
             FILE_TABLE[FILE_COUNT] = Some(File {
                 name:     name_bytes,
@@ -103,7 +104,7 @@ pub fn remove_file(name: &str) -> bool {
 // No heap: each slot is a fixed 4 KiB array.  Once all slots are claimed they
 // cannot be reclaimed (this sprint).
 
-const WRITE_SLOTS:    usize = 4;
+const WRITE_SLOTS:    usize = 16;
 const WRITE_SLOT_CAP: usize = 4096;
 
 static mut WRITE_POOL: [[u8; WRITE_SLOT_CAP]; WRITE_SLOTS] =
@@ -133,7 +134,7 @@ pub fn alloc_write_buf(data: &[u8]) -> Option<&'static [u8]> {
 // Slots are allocated once and never freed (single-session lifetime).
 
 pub const DISK_SLOT_SIZE: usize = 8192;
-const DISK_SLOTS: usize = 8;
+const DISK_SLOTS: usize = 64;
 
 static mut DISK_POOL: [[u8; DISK_SLOT_SIZE]; DISK_SLOTS] =
     [[0u8; DISK_SLOT_SIZE]; DISK_SLOTS];
@@ -156,27 +157,51 @@ pub fn alloc_disk_slot(len: usize) -> Option<*mut u8> {
     }
 }
 
-// ── Persist to Ramdisk (Sprint D.5) ─────────────────────────────────────────
+// ── FAT boot loader ──────────────────────────────────────────────────────────
 
-/// Serialize the entire in-memory file table into the Ramdisk using WasmFS
-/// format.  Returns the number of files successfully written.
-///
-/// The Ramdisk is volatile (it is a `static mut` byte array reset to zero on
-/// cold boot), so persistence across reboots requires a real block device
-/// driver (virtio-blk, Sprint D stretch).  Within a session, any file visible
-/// via `ls` — including those added by `write` — is preserved in the Ramdisk
-/// and can be read back by `WasmFs<Ramdisk>`.
-pub fn save_to_ramdisk() -> usize {
-    use wasmfs::WasmFs;
-    use block::Ramdisk;
+/// Read every file from the mounted FAT volume into the static disk-pool and
+/// register it in the in-memory table.  Called once at boot after FAT mount.
+pub fn load_fat_files_to_table() {
+    // Collect names first to avoid holding the FAT lock while writing to pool.
+    let mut names: [Option<([u8; 64], usize)>; DISK_SLOTS] = [None; DISK_SLOTS];
+    let mut count = 0usize;
+    fat::fat_list(|name, _size| {
+        if count < DISK_SLOTS {
+            let mut buf = [0u8; 64];
+            let len = name.len().min(64);
+            buf[..len].copy_from_slice(&name.as_bytes()[..len]);
+            names[count] = Some((buf, len));
+            count += 1;
+        }
+    });
 
-    let mut wfs = WasmFs::new(Ramdisk::get());
+    for slot in names[..count].iter().flatten() {
+        let (buf, len) = slot;
+        let name = core::str::from_utf8(&buf[..*len]).unwrap_or(""); // buf is 64 bytes
+        if name.is_empty() { continue; }
+        if let Some(data) = fat::fat_read_file(name) {
+            if let Some(ptr) = alloc_disk_slot(data.len()) {
+                // Safety: ptr is valid, unique, static-lifetime (backed by DISK_POOL).
+                unsafe {
+                    core::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+                    let slice = core::slice::from_raw_parts(ptr, data.len());
+                    register_file(name, slice);
+                }
+            }
+        }
+    }
+}
+
+// ── Persist: write current in-memory file to FAT disk ────────────────────────
+
+/// Flush all registered files back to the FAT volume.  Useful if `write`
+/// added in-memory-only files that were not yet synced to disk.
+pub fn save_to_fat() -> usize {
     let mut saved = 0usize;
-
     unsafe {
         for i in 0..FILE_COUNT {
             if let Some(f) = FILE_TABLE[i] {
-                if wfs.fs_write(f.name_str(), f.data).is_ok() {
+                if fat::fat_write_file(f.name_str(), f.data) {
                     saved += 1;
                 }
             }

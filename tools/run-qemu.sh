@@ -56,12 +56,12 @@ if ! command -v qemu-system-x86_64 &>/dev/null; then
     exit 1
 fi
 
-FS_IMG="$ROOT/fs.img"
+# Prefer disk.img (virtio-blk, configurable size) over fs.img.
+# fs.img is the embedded fallback baked into the kernel binary via include_bytes!
+# and is always available regardless of what QEMU mounts.
 FS_DRIVE=""
-if [ -f "$FS_IMG" ]; then
-    # virtio-blk: kernel reads blocks via virtqueue (legacy PCI transport).
-    # True disk persistence — kernel detects at runtime via PCI scan.
-    FS_DRIVE="-drive format=raw,file=$FS_IMG,if=virtio"
+if [ -f "$ROOT/disk.img" ]; then
+    FS_DRIVE="-drive format=raw,file=$ROOT/disk.img,if=virtio"
 fi
 
 echo "booting $IMG  [profile=$PROFILE${DISPLAY_ARGS:+, headless}]..."

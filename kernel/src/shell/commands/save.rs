@@ -1,10 +1,10 @@
-// save — flush in-memory file table to the Ramdisk (Sprint D.5)
+// save — flush in-memory file table to the FAT disk volume
 //
-// Serializes every registered file into the Ramdisk in WasmFS format.
-// The Ramdisk is a static byte array; its contents are lost on cold reboot.
-// True cross-reboot persistence requires a virtio-blk driver (Sprint D stretch).
+// Files added via `write` during a session are in-memory only.
+// `save` writes them to the mounted FAT filesystem so they persist across
+// reboots (virtio-blk) or remain available in-session (ramdisk fallback).
 
 pub fn run() {
-    let n = crate::fs::save_to_ramdisk();
-    crate::println!("saved {} file(s) to ramdisk", n);
+    let n = crate::fs::save_to_fat();
+    crate::println!("saved {} file(s) to FAT volume", n);
 }

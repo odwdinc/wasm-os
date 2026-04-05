@@ -1,15 +1,13 @@
 // write <name> <hex-bytes>
 //
-// Decodes a hex string (e.g. "deadbeef") into raw bytes, stores them in the
-// static write-buffer pool, and registers the result as a named file.
+// Decodes a hex string (e.g. "deadbeef") into raw bytes, writes the file to
+// the mounted FAT volume, and registers it in the in-memory file table.
 //
 // Example:
 //   write test.bin 48656c6c6f
 //
-// Limitations (this sprint):
-//   - Maximum file size: 4 096 bytes (one pool slot).
-//   - Pool has 4 slots total; once exhausted, further writes fail.
-//   - Files written this way are in-memory only; they do not survive reboot.
+// Files are written immediately to the FAT disk (virtio-blk) or ramdisk FAT,
+// so a subsequent `run` or `ls` sees them without needing `save`.
 
 pub fn run(argv: &[&str]) {
     if argv.len() < 2 {
@@ -28,16 +26,27 @@ pub fn run(argv: &[&str]) {
             return;
         }
     };
+    let data = &tmp[..len];
 
-    match crate::fs::alloc_write_buf(&tmp[..len]) {
+    // Write to FAT volume (persists across reboots on virtio-blk).
+    if !crate::fs::fat::fat_write_file(name, data) {
+        crate::println!("write: FAT write failed");
+        return;
+    }
+
+    // Also keep in the in-memory pool so `run` can get a 'static slice.
+    match crate::fs::alloc_write_buf(data) {
         Some(buf) => {
             crate::fs::register_file(name, buf);
-            crate::println!("wrote {} ({} bytes)", name, len);
         }
         None => {
-            crate::println!("write: out of write-buffer pool slots or data too large (max 4096 bytes)");
+            // Pool exhausted — file is on disk but can't be run this session
+            // without a reboot.
+            crate::println!("write: in-memory pool full; file saved to disk only");
+            return;
         }
     }
+    crate::println!("wrote {} ({} bytes)", name, len);
 }
 
 fn hex_decode(hex: &str, out: &mut [u8]) -> Option<usize> {

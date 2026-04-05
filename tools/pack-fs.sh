@@ -1,83 +1,124 @@
 #!/usr/bin/env bash
-# tools/pack-fs.sh — Pack files into a WasmFS filesystem image (Sprint D.3)
+# tools/pack-fs.sh — Create FAT filesystem images
 #
-# Usage:  pack-fs.sh [file ...]
-# Output: $REPO_ROOT/fs.img
+# Usage:  pack-fs.sh [--disk-size SIZE] [file ...]
 #
-# With no arguments produces an empty (all-zeros directory block) image.
-# With file arguments packs each file into the WasmFS flat format:
+# Creates two images in $REPO_ROOT:
 #
-#   Block 0        — directory (8 × 64-byte entries, 512 bytes total)
-#   Blocks 1..N    — file data (one contiguous run per file)
+#   fs.img   — 2 MiB FAT12 embedded fallback.  Size is fixed and must match
+#               RAM_FAT_SIZE in kernel/src/fs/fat.rs (used with include_bytes!).
 #
-# Requires: python3
+#   disk.img — FAT virtio-blk disk at SIZE (default: 32M).  mkfs.fat
+#               auto-selects FAT12/16/32 based on the size you choose.
+#               Any size ≥ 2M is accepted.
+#
+# Both images receive the same set of files in their root directory.
+#
+# Requires: mkfs.fat (dosfstools), mcopy (mtools)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if ! command -v python3 &>/dev/null; then
-    echo "error: python3 not found — required to build fs.img"
+FSIMG="$ROOT/fs.img"
+DISKIMG="$ROOT/disk.img"
+
+# ── Argument parsing ──────────────────────────────────────────────────────────
+
+DISK_SIZE="32M"
+FILES=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --disk-size)
+            DISK_SIZE="$2"; shift 2 ;;
+        --disk-size=*)
+            DISK_SIZE="${1#--disk-size=}"; shift ;;
+        -*)
+            echo "error: unknown option: $1"
+            echo "usage: pack-fs.sh [--disk-size SIZE] [file ...]"
+            exit 1 ;;
+        *)
+            FILES+=("$1"); shift ;;
+    esac
+done
+
+# ── Parse human-readable size (e.g. 32M, 128M, 1G) into bytes ────────────────
+
+parse_size() {
+    local s="$1"
+    local num="${s%%[KkMmGg]*}"
+    local unit="${s#"$num"}"
+    case "$unit" in
+        K|k) echo $((num * 1024)) ;;
+        M|m) echo $((num * 1024 * 1024)) ;;
+        G|g) echo $((num * 1024 * 1024 * 1024)) ;;
+        "")  echo "$num" ;;
+        *)
+            echo "error: unrecognised size suffix in '$s' (use K, M or G)"
+            exit 1 ;;
+    esac
+}
+
+DISK_BYTES=$(parse_size "$DISK_SIZE")
+DISK_SECTORS=$((DISK_BYTES / 512))
+
+# Minimum: must be bigger than the embedded fallback (2 MiB).
+MIN_DISK_BYTES=$((2 * 1024 * 1024))
+if (( DISK_BYTES < MIN_DISK_BYTES )); then
+    echo "error: --disk-size must be at least 2M (got $DISK_SIZE)"
     exit 1
 fi
 
-python3 - "$ROOT" "$@" <<'PYEOF'
-import sys, os, struct
+# ── Tool detection ────────────────────────────────────────────────────────────
 
-root  = sys.argv[1]
-files = sys.argv[2:]
-out   = os.path.join(root, "fs.img")
+MKFSFAT=""
+for candidate in mkfs.fat mkdosfs /sbin/mkfs.fat /usr/sbin/mkfs.fat \
+                 /sbin/mkdosfs /usr/sbin/mkdosfs; do
+    if command -v "$candidate" &>/dev/null 2>&1 || [ -x "$candidate" ]; then
+        MKFSFAT="$candidate"
+        break
+    fi
+done
+if [ -z "$MKFSFAT" ]; then
+    echo "error: mkfs.fat / mkdosfs not found — install dosfstools"
+    echo "  Ubuntu/Debian: sudo apt install dosfstools mtools"
+    exit 1
+fi
 
-BLOCK_SIZE     = 512
-DIR_ENTRY_SIZE = 64
-MAX_ENTRIES    = BLOCK_SIZE // DIR_ENTRY_SIZE   # 8
-DATA_START     = 1                               # data begins at block 1
-FLAG_VALID     = 0x01
+if ! command -v mcopy &>/dev/null; then
+    echo "error: mcopy not found — install mtools"
+    echo "  Ubuntu/Debian: sudo apt install mtools"
+    exit 1
+fi
 
-if len(files) > MAX_ENTRIES:
-    print(f"error: too many files ({len(files)} > {MAX_ENTRIES})", file=sys.stderr)
-    sys.exit(1)
+# ── Build fs.img — fixed 2 MiB FAT12 embedded fallback ───────────────────────
 
-# Read all file contents up-front so we can compute start blocks.
-entries      = []
-current_blk  = DATA_START
-for path in files:
-    name = os.path.basename(path)
-    if len(name.encode("utf-8")) > 32:
-        print(f"error: filename '{name}' exceeds 32 bytes", file=sys.stderr)
-        sys.exit(1)
-    with open(path, "rb") as f:
-        data = f.read()
-    blocks = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
-    entries.append((name, current_blk, data))
-    current_blk += blocks
+FS_BYTES=$((2 * 1024 * 1024))   # must match RAM_FAT_SIZE in kernel/src/fs/fat.rs
+FS_SECTORS=$((FS_BYTES / 512))
 
-# Build directory block (512 bytes, 8 slots of 64 bytes each).
-dir_block = bytearray(BLOCK_SIZE)
-for i, (name, start_blk, data) in enumerate(entries):
-    off = i * DIR_ENTRY_SIZE
-    name_b = name.encode("utf-8")[:32].ljust(32, b"\x00")
-    dir_block[off:off+32]    = name_b
-    dir_block[off+32:off+36] = struct.pack("<I", start_blk)
-    dir_block[off+36:off+40] = struct.pack("<I", len(data))
-    dir_block[off+40]        = FLAG_VALID
-    # bytes 41–63 remain zero (reserved)
+dd if=/dev/zero of="$FSIMG" bs=512 count="$FS_SECTORS" status=none
+"$MKFSFAT" -F 12 -n "KERNELFS" "$FSIMG" >/dev/null
 
-# Build data region (each file padded to a block boundary).
-data_region = bytearray()
-for _, _, data in entries:
-    padding = (BLOCK_SIZE - len(data) % BLOCK_SIZE) % BLOCK_SIZE
-    if len(data) == 0:
-        padding = BLOCK_SIZE
-    data_region.extend(data)
-    data_region.extend(b"\x00" * padding)
+# ── Build disk.img — configurable virtio-blk disk ────────────────────────────
 
-with open(out, "wb") as f:
-    f.write(bytes(dir_block))
-    f.write(bytes(data_region))
+dd if=/dev/zero of="$DISKIMG" bs=512 count="$DISK_SECTORS" status=none
+# Let mkfs.fat pick FAT12/16/32 based on size.
+"$MKFSFAT" -n "KERNELDISK" "$DISKIMG" >/dev/null
 
-total_blocks = 1 + (len(data_region) // BLOCK_SIZE)
-print(f"fs.img: {len(entries)} file(s), {total_blocks} block(s), {os.path.getsize(out)} bytes")
-for name, start_blk, data in entries:
-    print(f"  {name:<32s}  {len(data):6d} bytes  @ block {start_blk}")
-PYEOF
+# ── Copy files into both images ───────────────────────────────────────────────
+
+export MTOOLS_SKIP_CHECK=1
+COUNT=0
+
+for f in "${FILES[@]}"; do
+    name="$(basename "$f")"
+    size="$(wc -c < "$f")"
+    mcopy -i "$FSIMG"   "$f" "::/$name"
+    mcopy -i "$DISKIMG" "$f" "::/$name"
+    echo "  packed: $name ($size bytes)"
+    COUNT=$((COUNT + 1))
+done
+
+echo "fs.img:   FAT12, ${FS_BYTES} bytes, $COUNT file(s)  [embedded fallback]"
+echo "disk.img: FAT,   ${DISK_BYTES} bytes, $COUNT file(s)  [virtio-blk, --disk-size $DISK_SIZE]"

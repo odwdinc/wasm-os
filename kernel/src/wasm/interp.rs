@@ -168,6 +168,8 @@ pub enum InterpError {
     UnknownOpcode(u8),
     /// Not a real error — used to suspend a task cooperatively.
     Yielded,
+    /// Not a real error — module called `exit`; treated as clean completion.
+    Exited,
 }
 
 impl InterpError {
@@ -196,6 +198,7 @@ impl InterpError {
             Self::InvalidConversion     => "invalid float-to-integer conversion",
             Self::UnknownOpcode(_)      => "unknown opcode",
             Self::Yielded               => "task yielded",
+            Self::Exited                => "module exited",
         }
     }
 }

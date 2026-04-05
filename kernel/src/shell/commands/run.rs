@@ -16,6 +16,25 @@ pub fn run(argv: &[&str]) {
             None    => { crate::println!("invalid arg: {}", s); return; }
         }
     }
+
+    // Store the raw args string so `args_get` host function can expose it.
+    // Join with spaces into a fixed-size buffer without heap allocation.
+    let mut raw_buf = [0u8; 128];
+    let mut raw_len = 0usize;
+    for (i, s) in argv[1..].iter().enumerate() {
+        if i > 0 && raw_len < raw_buf.len() {
+            raw_buf[raw_len] = b' ';
+            raw_len += 1;
+        }
+        let bytes = s.as_bytes();
+        let copy = bytes.len().min(raw_buf.len() - raw_len);
+        raw_buf[raw_len..raw_len + copy].copy_from_slice(&bytes[..copy]);
+        raw_len += copy;
+    }
+    if let Ok(s) = core::str::from_utf8(&raw_buf[..raw_len]) {
+        crate::wasm::engine::set_args(s);
+    }
+
     let handle = match crate::wasm::engine::spawn(name, data) {
         Ok(h)  => h,
         Err(e) => { crate::println!("error: {}", e.as_str()); return; }

@@ -1,8 +1,6 @@
 # Roadmap
 
-## MVP — Complete (Sprints 1–4)
-
-The MVP is done. The system boots, runs a shell, and executes real WASM modules.
+## Completed Sprints
 
 | Sprint | Focus | Status |
 |---|---|---|
@@ -10,78 +8,27 @@ The MVP is done. The system boots, runs a shell, and executes real WASM modules.
 | 2 | WASM loader, basic interpreter, `hello.wasm` | Done |
 | 3 | In-memory FS, export parsing, shell commands (`ls`, `info`, `run`) | Done |
 | 4 | Full control flow, locals, memory ops, i32 arithmetic/comparison | Done |
+| A | WASM spec completeness — i64, globals, `call_indirect`, `br_table`, missing opcodes | Done |
+| B | Runtime isolation — instance pool, named host registry, `ps` command | Done |
+| C | Preemptive scheduling — PIT timer, task queue, `task-run`/`task-kill`/`tasks` | Done |
+| D | Persistent filesystem — virtio-blk driver, FAT12/16/32, shell FS commands | Done |
 
-Exit condition met:
+Exit condition for FAT/filesystem sprint:
 ```
-> run fib.wasm 10
-55
-> run fib.wasm 20
-6765
+> ls
+  hello.wasm               1234 bytes
+> df
+Filesystem    Size (K)  Used (K)  Avail (K)
+FAT              32768        12     32756
+> edit notes.txt
+-- new file: notes.txt ---
+Append lines.  Commands: :w = save  :q = quit
+> hello world
+> :w
+saved notes.txt (12 bytes)
+> cat notes.txt
+hello world
 ```
-
----
-
-## Sprint A — WASM Spec Completeness
-
-Bring the interpreter close enough to the WASM MVP spec that modules produced by
-real toolchains (`rustc --target wasm32-unknown-unknown`, `emscripten`) execute
-without hitting unsupported-opcode errors.
-
-**Tasks:**
-- `i64` type support (tagged value stack)
-- `f32`/`f64` (soft-float — no SSE in kernel mode)
-- Multi-value returns
-- Global variables (section ID 6)
-- Table section + `call_indirect`
-- Missing opcodes: `memory.size`, `memory.grow`, `i32.div_s/u`, `i32.rem_s/u`, `i32.shr_u`, `i32.rotl/rotr/clz/ctz/popcnt`, `br_table`
-
-**Done when:**
-```
-> run primes.wasm
-Primes up to 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47
-```
-
----
-
-## Sprint B — Runtime Isolation
-
-Run multiple WASM modules without shared memory or state. Each `run` gets a
-clean, isolated instance.
-
-**Tasks:**
-- `Instance` struct owns its own linear memory
-- Instance pool (`[Option<Instance>; MAX_INSTANCES]`)
-- Named host function registry (replaces dispatch-by-index)
-- `ps` shell command
-
-**Done when:** two sequential `run hello.wasm` calls produce identical output with
-no state leak.
-
----
-
-## Sprint C — Preemptive Scheduling
-
-WASM instances run as tasks. Long-running modules don't freeze the terminal.
-
-**Tasks:**
-- PIT/APIC timer interrupt (10ms tick)
-- `Task` struct + fixed-size task queue
-- Round-robin scheduler
-- `host_yield()` / `sleep_ms()` host functions
-- Shell as a task
-
----
-
-## Sprint D — Persistent Filesystem
-
-Files survive reboots. Modules stored, updated, deleted without rebuilding the
-kernel.
-
-**Tasks:**
-- Block device abstraction (ramdisk + optional virtio-blk)
-- Flat "WasmFS" format: fixed-size directory entries + data region
-- Host-side `tools/pack-fs.sh` to build a filesystem image
-- `ls`, `rm`, `write` against persistent FS
 
 ---
 
@@ -92,8 +39,10 @@ A WASM module opens TCP connections and sends/receives data.
 **Tasks:**
 - virtio-net driver
 - TCP/IP stack (smoltcp or minimal hand-written)
-- Socket host functions (`"net"."connect"`, `"net"."send"`, etc.)
+- Socket host functions (`"net"."connect"`, `"net"."send"`, `"net"."recv"`, `"net"."close"`)
 - `httpd.wasm` demo module
+
+**Done when:** a WASM module fetches a URL and prints the response body.
 
 ---
 
@@ -118,19 +67,19 @@ toolchain required.
 **Tasks:**
 - WAT tokenizer + parser
 - WASM binary emitter
-- `edit <file.wat>` / `asm <file.wat>` shell commands
+- `asm <file.wat>` shell command (compile to `.wasm` in place)
 
 ---
 
 ## Dependency Graph
 
 ```
-MVP (Sprints 1-4)
+Sprints 1-4 (MVP)
     └── Sprint A: WASM Spec Completeness
             ├── Sprint B: Runtime Isolation
             │       └── Sprint C: Preemptive Scheduling
             │               └── Sprint E: Networking ──┐
             ├── Sprint D: Persistent FS ───────────────┘
-            │       └── Sprint G: WAT Parser
+            │       └── Sprint G: WAT Assembler
             └── Sprint F: JIT Compilation
 ```

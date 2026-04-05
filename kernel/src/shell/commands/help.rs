@@ -4,10 +4,15 @@ pub fn run() {
     crate::println!("  echo <args>        print arguments");
     crate::println!("  history            show command history");
     crate::println!("  clear              clear the screen");
-    crate::println!("  ls                 list files with sizes");
+    crate::println!("  ls                 list files and directories");
+    crate::println!("  cat <file>         print file contents");
+    crate::println!("  cd <dir>           change directory");
+    crate::println!("  mkdir <dir>        create a directory");
+    crate::println!("  df                 show filesystem space usage");
     crate::println!("  rm <name>          remove a file");
     crate::println!("  write <name> <hex> write raw bytes (hex-encoded) as a file");
-    crate::println!("  save               flush file table to ramdisk (WasmFS format)");
+    crate::println!("  edit <name>        line-append editor (:w = save, :q = quit)");
+    crate::println!("  save               flush file table to FAT volume");
     crate::println!("  info [name]        show module info, or tick count if no name");
     crate::println!("  run <name>         execute a .wasm module");
     crate::println!("  ps                 list running wasm instances");

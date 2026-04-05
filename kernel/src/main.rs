@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 mod drivers;
 mod fs;
 mod interrupts;
@@ -86,21 +88,31 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }
     };
     memory::init(phys_mem_off);
-    // Try to mount the filesystem from the virtio-blk disk (true persistence).
-    // Fall back to the compile-time embedded image if no virtio device is found.
-    let virtio_files = if let Some(blk) = drivers::virtio_blk::VirtioBlk::try_init() {
-        let n = fs::wasmfs::mount_from_blk(blk);
-        println!("virtio-blk: mounted {} file(s)", n);
-        n
+    // Mount FAT filesystem — virtio-blk for true persistence, ramdisk fallback.
+    let mounted_virtio = if let Some(blk) = drivers::virtio_blk::VirtioBlk::try_init() {
+        if fs::fat::mount_virtio(blk) {
+            println!("virtio-blk: FAT volume mounted");
+            true
+        } else {
+            println!("virtio-blk: FAT mount failed, falling back to embedded image");
+            false
+        }
     } else {
-        0
+        false
     };
 
-    if virtio_files == 0 {
-        // No virtio disk (or empty disk) — fall back to the embedded fs.img.
+    if !mounted_virtio {
         static FS_IMG: &[u8] = include_bytes!("../../fs.img");
-        fs::wasmfs::mount_from_image(FS_IMG);
+        if fs::fat::mount_ramdisk(FS_IMG) {
+            println!("ramdisk: FAT volume mounted ({} bytes)", FS_IMG.len());
+        } else {
+            println!("ramdisk: FAT mount failed (image may be empty)");
+        }
     }
+
+    // Populate the in-memory file table from the mounted FAT volume so that
+    // the wasm engine can call `fs::find_file` with a `'static` slice.
+    fs::load_fat_files_to_table();
 
     if let Some(hello) = fs::find_file("hello.wasm") {
         if let Err(e) = wasm::engine::run(hello, "main", &[]) {
