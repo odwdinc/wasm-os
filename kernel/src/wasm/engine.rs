@@ -30,7 +30,7 @@ pub fn take_pending_sleep_ms() -> u32 {
 // ── Capacity limits ───────────────────────────────────────────────────────────
 
 /// Maximum WASM pages (64 KiB each) any module may request.
-pub const MAX_MEM_PAGES: u32  = 4;
+pub const MAX_MEM_PAGES: u32  = 16;
 /// Maximum simultaneously live instances.
 pub const MAX_INSTANCES: usize = 4;
 const PAGE_SIZE: usize = 65536;
@@ -327,13 +327,12 @@ pub fn spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
         .map(read_memory_min_pages)
         .unwrap_or(0);
     if min_pages > MAX_MEM_PAGES { return Err(RunError::MemoryTooLarge); }
-    let mem_bytes = min_pages as usize * PAGE_SIZE;
 
-    // Zero this slot's memory region and take a 'static mutable slice.
+    // Zero the entire slot so memory.grow pages are already clean.
     // SAFETY: single-threaded kernel; slot is verified free above.
     let mem: &'static mut [u8] = unsafe {
-        SLOT_MEM[slot][..mem_bytes].fill(0);
-        &mut SLOT_MEM[slot][..mem_bytes]
+        SLOT_MEM[slot].fill(0);
+        &mut SLOT_MEM[slot][..]
     };
 
     let import_count = count_func_imports(module.import_section);
@@ -353,7 +352,7 @@ pub fn spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     }
     if missing { return Err(RunError::ImportNotFound); }
 
-    let mut interp = Interpreter::new(&module, import_count, mem, host_fns)
+    let mut interp = Interpreter::new(&module, import_count, mem, host_fns, min_pages)
         .map_err(RunError::Interp)?;
 
     if let Some(data) = module.data_section {

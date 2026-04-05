@@ -15,7 +15,13 @@ use core::panic::PanicInfo;
 
 const BOOTLOADER_CONFIG: BootloaderConfig = {
     let mut c = BootloaderConfig::new_default();
-    c.kernel_stack_size = 512 * 1024; // 512 KiB — Instance+Interpreter are large stack types
+    // Stack budget (worst case — no NRVO through Result/map_err/? chain):
+    //   Interpreter::new() frame : ~70 KiB (Self) + ~70 KiB (Result<Self,E> return slot)
+    //                              + ~25 KiB (parse locals) = ~165 KiB
+    //   spawn() frame            : ~70 KiB (Result<_,E1>) + ~70 KiB (after map_err)
+    //                              + ~70 KiB (interp local) + ~4 KiB (host_fns) = ~214 KiB
+    //   Rest of kernel call chain: ~20 KiB  →  ~400 KiB peak; 1024 KiB = 2.5× margin.
+    c.kernel_stack_size = 1024 * 1024;
     // Map all physical memory at a dynamic virtual address so the kernel can
     // walk page tables for accurate virtual→physical translation (needed for
     // virtio DMA ring setup).

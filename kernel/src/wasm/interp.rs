@@ -89,16 +89,43 @@ const OP_I64_SHR_S:     u8 = 0x87;
 const OP_I64_SHR_U:     u8 = 0x88;
 const OP_I64_ROTL:      u8 = 0x89;
 const OP_I64_ROTR:      u8 = 0x8A;
+// narrow loads
+const OP_I32_LOAD8_S:  u8 = 0x2C;
+const OP_I32_LOAD16_S: u8 = 0x2E;
+const OP_I32_LOAD16_U: u8 = 0x2F;
+const OP_I64_LOAD8_S:  u8 = 0x30;
+const OP_I64_LOAD8_U:  u8 = 0x31;
+const OP_I64_LOAD16_S: u8 = 0x32;
+const OP_I64_LOAD16_U: u8 = 0x33;
+const OP_I64_LOAD32_S: u8 = 0x34;
+const OP_I64_LOAD32_U: u8 = 0x35;
+// narrow stores
+const OP_I32_STORE16: u8 = 0x3B;
+const OP_I64_STORE8:  u8 = 0x3C;
+const OP_I64_STORE16: u8 = 0x3D;
+const OP_I64_STORE32: u8 = 0x3E;
+// i64 div/rem
+const OP_I64_DIV_S: u8 = 0x7F;
+const OP_I64_DIV_U: u8 = 0x80;
+const OP_I64_REM_S: u8 = 0x81;
+const OP_I64_REM_U: u8 = 0x82;
+// type conversions
 const OP_I32_WRAP_I64:     u8 = 0xA7;
 const OP_I64_EXTEND_I32_S: u8 = 0xAC;
 const OP_I64_EXTEND_I32_U: u8 = 0xAD;
+// sign-extension
+const OP_I32_EXTEND8_S:  u8 = 0xC0;
+const OP_I32_EXTEND16_S: u8 = 0xC1;
+const OP_I64_EXTEND8_S:  u8 = 0xC2;
+const OP_I64_EXTEND16_S: u8 = 0xC3;
+const OP_I64_EXTEND32_S: u8 = 0xC4;
 
 // ── Capacity limits ───────────────────────────────────────────────────────────
-pub const MAX_FUNCS:      usize = 32;
-pub const MAX_TYPES:      usize = 16;
-pub const MAX_LOCALS:     usize = 16;
-pub const MAX_GLOBALS:    usize = 32;
-pub const MAX_TABLE:      usize = 256;
+pub const MAX_FUNCS:      usize = 512;
+pub const MAX_TYPES:      usize = 128;
+pub const MAX_LOCALS:     usize = 32;
+pub const MAX_GLOBALS:    usize = 64;
+pub const MAX_TABLE:      usize = 512;
 
 const NULL_FUNC: u32 = u32::MAX; // sentinel for an uninitialised table entry
 pub const MAX_CTRL_DEPTH: usize = 64; // total across all live call frames
@@ -137,6 +164,7 @@ pub enum InterpError {
     CallStackOverflow,
     MemOutOfBounds,
     DivisionByZero,
+    InvalidConversion,
     UnknownOpcode(u8),
     /// Not a real error — used to suspend a task cooperatively.
     Yielded,
@@ -165,6 +193,7 @@ impl InterpError {
             Self::CallStackOverflow     => "call stack overflow",
             Self::MemOutOfBounds        => "memory access out of bounds",
             Self::DivisionByZero        => "integer divide by zero",
+            Self::InvalidConversion     => "invalid float-to-integer conversion",
             Self::UnknownOpcode(_)      => "unknown opcode",
             Self::Yielded               => "task yielded",
         }
@@ -243,15 +272,20 @@ pub struct Interpreter<'a> {
     global_mutable:  [bool; MAX_GLOBALS],
     global_count:    usize,
 
-    pub mem:      &'a mut [u8],
-    pub host_fns: [Option<HostFn>; MAX_FUNCS],
+    pub mem:           &'a mut [u8],
+    pub host_fns:      [Option<HostFn>; MAX_FUNCS],
+
+    /// Active WASM linear memory pages (64 KiB each).
+    /// Bounds checks use `current_pages * PAGE_SIZE`; memory.grow increases this.
+    pub current_pages: u32,
+    max_pages:         u32,
 
     /// Set by host functions; checked at the top of each dispatch iteration.
     pub yield_requested: bool,
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(module: &Module<'a>, import_count: usize, mem: &'a mut [u8], host_fns: [Option<HostFn>; MAX_FUNCS]) -> Result<Self, InterpError> {
+    pub fn new(module: &Module<'a>, import_count: usize, mem: &'a mut [u8], host_fns: [Option<HostFn>; MAX_FUNCS], initial_pages: u32) -> Result<Self, InterpError> {
         let mut type_param_counts  = [0usize; MAX_TYPES];
         let mut type_result_counts = [0usize; MAX_TYPES];
         let type_count = if let Some(tb) = module.type_section {
@@ -291,6 +325,7 @@ impl<'a> Interpreter<'a> {
             parse_element_section(eb, &mut table, &mut table_size)?;
         }
 
+        let max_pages = (mem.len() / PAGE_SIZE) as u32;
         Ok(Self {
             bodies, body_count, local_counts,
             type_param_counts, type_result_counts, type_count, func_type_indices,
@@ -304,8 +339,15 @@ impl<'a> Interpreter<'a> {
 
             mem,
             host_fns,
+            current_pages: initial_pages,
+            max_pages,
             yield_requested: false,
         })
+    }
+
+    #[inline]
+    fn active_mem_bytes(&self) -> usize {
+        self.current_pages as usize * PAGE_SIZE
     }
 
     pub fn call(&mut self, func_idx: usize) -> Result<(), InterpError> {
@@ -634,7 +676,7 @@ impl<'a> Interpreter<'a> {
                     self.frames[fi].pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
                     let ea   = addr.wrapping_add(offset as usize);
-                    if ea + 4 > self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    if ea + 4 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
                     let val = i32::from_le_bytes([
                         self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3],
                     ]);
@@ -649,7 +691,7 @@ impl<'a> Interpreter<'a> {
                     self.frames[fi].pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
                     let ea   = addr.wrapping_add(offset as usize);
-                    if ea >= self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    if ea >= self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
                     self.v_push(self.mem[ea] as i64)?;
                 }
                 OP_I64_LOAD => {
@@ -661,12 +703,148 @@ impl<'a> Interpreter<'a> {
                     self.frames[fi].pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
                     let ea   = addr.wrapping_add(offset as usize);
-                    if ea + 8 > self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    if ea + 8 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
                     let val = i64::from_le_bytes([
                         self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3],
                         self.mem[ea+4], self.mem[ea+5], self.mem[ea+6], self.mem[ea+7],
                     ]);
                     self.v_push(val)?;
+                }
+
+                // f32.load (0x2A) — load 4 bytes as f32 bits
+                0x2A => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 4 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    let bits = u32::from_le_bytes([self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3]]);
+                    self.v_push(bits as i64)?;
+                }
+                // f64.load (0x2B) — load 8 bytes as f64 bits
+                0x2B => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 8 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    let bits = u64::from_le_bytes([
+                        self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3],
+                        self.mem[ea+4], self.mem[ea+5], self.mem[ea+6], self.mem[ea+7],
+                    ]);
+                    self.v_push(bits as i64)?;
+                }
+                // narrow loads
+                OP_I32_LOAD8_S => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea >= self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    self.v_push(self.mem[ea] as i8 as i32 as i64)?;
+                }
+                OP_I32_LOAD16_S => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 2 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    let v = i16::from_le_bytes([self.mem[ea], self.mem[ea+1]]);
+                    self.v_push(v as i32 as i64)?;
+                }
+                OP_I32_LOAD16_U => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 2 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    let v = u16::from_le_bytes([self.mem[ea], self.mem[ea+1]]);
+                    self.v_push(v as i64)?;
+                }
+                OP_I64_LOAD8_S => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea >= self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    self.v_push(self.mem[ea] as i8 as i64)?;
+                }
+                OP_I64_LOAD8_U => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea >= self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    self.v_push(self.mem[ea] as i64)?;
+                }
+                OP_I64_LOAD16_S => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 2 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    let v = i16::from_le_bytes([self.mem[ea], self.mem[ea+1]]);
+                    self.v_push(v as i64)?;
+                }
+                OP_I64_LOAD16_U => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 2 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    let v = u16::from_le_bytes([self.mem[ea], self.mem[ea+1]]);
+                    self.v_push(v as i64)?;
+                }
+                OP_I64_LOAD32_S => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 4 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    let v = i32::from_le_bytes([self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3]]);
+                    self.v_push(v as i64)?;
+                }
+                OP_I64_LOAD32_U => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 4 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    let v = u32::from_le_bytes([self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3]]);
+                    self.v_push(v as i64)?;
                 }
 
                 // ── memory stores ─────────────────────────────────────────────
@@ -680,7 +858,7 @@ impl<'a> Interpreter<'a> {
                     let val  = self.v_pop()? as i32;
                     let addr = self.v_pop()? as u32 as usize;
                     let ea   = addr.wrapping_add(offset as usize);
-                    if ea + 4 > self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    if ea + 4 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
                     self.mem[ea..ea+4].copy_from_slice(&val.to_le_bytes());
                 }
                 OP_I32_STORE8 => {
@@ -693,7 +871,7 @@ impl<'a> Interpreter<'a> {
                     let val  = self.v_pop()? as u8;
                     let addr = self.v_pop()? as u32 as usize;
                     let ea   = addr.wrapping_add(offset as usize);
-                    if ea >= self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    if ea >= self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
                     self.mem[ea] = val;
                 }
                 OP_I64_STORE => {
@@ -706,21 +884,105 @@ impl<'a> Interpreter<'a> {
                     let val  = self.v_pop()?;
                     let addr = self.v_pop()? as u32 as usize;
                     let ea   = addr.wrapping_add(offset as usize);
-                    if ea + 8 > self.mem.len() { return Err(InterpError::MemOutOfBounds); }
+                    if ea + 8 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
                     self.mem[ea..ea+8].copy_from_slice(&val.to_le_bytes());
+                }
+                // f32.store (0x38) — store 4 bytes of f32 bits
+                0x38 => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let val  = self.v_pop()? as u32;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 4 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    self.mem[ea..ea+4].copy_from_slice(&val.to_le_bytes());
+                }
+                // f64.store (0x39) — store 8 bytes of f64 bits
+                0x39 => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let val  = self.v_pop()? as u64;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 8 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    self.mem[ea..ea+8].copy_from_slice(&val.to_le_bytes());
+                }
+                // narrow stores
+                OP_I32_STORE16 => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let val  = self.v_pop()? as u16;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 2 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    self.mem[ea..ea+2].copy_from_slice(&val.to_le_bytes());
+                }
+                OP_I64_STORE8 => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let val  = self.v_pop()? as u8;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea >= self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    self.mem[ea] = val;
+                }
+                OP_I64_STORE16 => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let val  = self.v_pop()? as u16;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 2 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    self.mem[ea..ea+2].copy_from_slice(&val.to_le_bytes());
+                }
+                OP_I64_STORE32 => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    let val  = self.v_pop()? as u32;
+                    let addr = self.v_pop()? as u32 as usize;
+                    let ea   = addr.wrapping_add(offset as usize);
+                    if ea + 4 > self.active_mem_bytes() { return Err(InterpError::MemOutOfBounds); }
+                    self.mem[ea..ea+4].copy_from_slice(&val.to_le_bytes());
                 }
 
                 // ── memory.size / memory.grow ─────────────────────────────────
                 OP_MEMORY_SIZE => {
                     let fi = self.fdepth - 1;
                     self.frames[fi].pc += 1; // skip reserved 0x00 byte
-                    self.v_push((self.mem.len() / PAGE_SIZE) as i64)?;
+                    self.v_push(self.current_pages as i64)?;
                 }
                 OP_MEMORY_GROW => {
                     let fi = self.fdepth - 1;
                     self.frames[fi].pc += 1; // skip reserved 0x00 byte
-                    self.v_pop()?;           // discard requested delta
-                    self.v_push(-1i64)?;     // always fails (fixed memory)
+                    let delta = self.v_pop()? as u32;
+                    let old   = self.current_pages;
+                    if old.saturating_add(delta) <= self.max_pages {
+                        let old_bytes = old as usize * PAGE_SIZE;
+                        let new_bytes = (old + delta) as usize * PAGE_SIZE;
+                        self.mem[old_bytes..new_bytes].fill(0);
+                        self.current_pages = old + delta;
+                        self.v_push(old as i64)?;
+                    } else {
+                        self.v_push(-1i64)?;
+                    }
                 }
 
                 // ── i32.const / i64.const ────────────────────────────────────
@@ -812,6 +1074,27 @@ impl<'a> Interpreter<'a> {
                 OP_I64_ADD    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_add(b))?; }
                 OP_I64_SUB    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_sub(b))?; }
                 OP_I64_MUL    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_mul(b))?; }
+                OP_I64_DIV_S  => {
+                    let b = self.v_pop()?; let a = self.v_pop()?;
+                    if b == 0 { return Err(InterpError::DivisionByZero); }
+                    if a == i64::MIN && b == -1 { return Err(InterpError::DivisionByZero); }
+                    self.v_push(a.wrapping_div(b))?;
+                }
+                OP_I64_DIV_U  => {
+                    let b = self.v_pop()? as u64; let a = self.v_pop()? as u64;
+                    if b == 0 { return Err(InterpError::DivisionByZero); }
+                    self.v_push((a / b) as i64)?;
+                }
+                OP_I64_REM_S  => {
+                    let b = self.v_pop()?; let a = self.v_pop()?;
+                    if b == 0 { return Err(InterpError::DivisionByZero); }
+                    self.v_push(a.wrapping_rem(b))?;
+                }
+                OP_I64_REM_U  => {
+                    let b = self.v_pop()? as u64; let a = self.v_pop()? as u64;
+                    if b == 0 { return Err(InterpError::DivisionByZero); }
+                    self.v_push((a % b) as i64)?;
+                }
                 OP_I64_AND    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a & b)?; }
                 OP_I64_OR     => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a | b)?; }
                 OP_I64_XOR    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a ^ b)?; }
@@ -825,6 +1108,195 @@ impl<'a> Interpreter<'a> {
                 OP_I32_WRAP_I64     => { let a = self.v_pop()?; self.v_push(a as i32 as i64)?; }
                 OP_I64_EXTEND_I32_S => { let a = self.v_pop()? as i32; self.v_push(a as i64)?; }
                 OP_I64_EXTEND_I32_U => { let a = self.v_pop()? as u32; self.v_push(a as i64)?; }
+
+                // ── sign-extension (0xC0–0xC4) ────────────────────────────────
+                OP_I32_EXTEND8_S  => { let v = self.v_pop()? as i32; self.v_push((v as i8)  as i32 as i64)?; }
+                OP_I32_EXTEND16_S => { let v = self.v_pop()? as i32; self.v_push((v as i16) as i32 as i64)?; }
+                OP_I64_EXTEND8_S  => { let v = self.v_pop()?;        self.v_push((v as i8)  as i64)?; }
+                OP_I64_EXTEND16_S => { let v = self.v_pop()?;        self.v_push((v as i16) as i64)?; }
+                OP_I64_EXTEND32_S => { let v = self.v_pop()?;        self.v_push((v as i32) as i64)?; }
+
+                // ── f32/f64 constants ─────────────────────────────────────────
+                0x43 => { // f32.const — 4-byte LE IEEE 754
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    if pc + 4 > body.len() { return Err(InterpError::MalformedCode); }
+                    let bits = u32::from_le_bytes([body[pc], body[pc+1], body[pc+2], body[pc+3]]);
+                    self.frames[fi].pc += 4;
+                    self.v_push(bits as i64)?;
+                }
+                0x44 => { // f64.const — 8-byte LE IEEE 754
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    if pc + 8 > body.len() { return Err(InterpError::MalformedCode); }
+                    let bits = u64::from_le_bytes([
+                        body[pc], body[pc+1], body[pc+2], body[pc+3],
+                        body[pc+4], body[pc+5], body[pc+6], body[pc+7],
+                    ]);
+                    self.frames[fi].pc += 8;
+                    self.v_push(bits as i64)?;
+                }
+
+                // ── f32 comparisons (0x5B–0x60) ───────────────────────────────
+                0x5B => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push(if a == b { 1 } else { 0 })?; }
+                0x5C => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push(if a != b { 1 } else { 0 })?; }
+                0x5D => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push(if a <  b { 1 } else { 0 })?; }
+                0x5E => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push(if a >  b { 1 } else { 0 })?; }
+                0x5F => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push(if a <= b { 1 } else { 0 })?; }
+                0x60 => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push(if a >= b { 1 } else { 0 })?; }
+
+                // ── f64 comparisons (0x61–0x66) ───────────────────────────────
+                0x61 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push(if a == b { 1 } else { 0 })?; }
+                0x62 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push(if a != b { 1 } else { 0 })?; }
+                0x63 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push(if a <  b { 1 } else { 0 })?; }
+                0x64 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push(if a >  b { 1 } else { 0 })?; }
+                0x65 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push(if a <= b { 1 } else { 0 })?; }
+                0x66 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push(if a >= b { 1 } else { 0 })?; }
+
+                // ── f32 arithmetic (0x8B–0x98) ────────────────────────────────
+                0x8B => { let a = f32::from_bits(self.v_pop()? as u32); self.v_push(a.abs().to_bits() as i64)?; }
+                0x8C => { let a = f32::from_bits(self.v_pop()? as u32); self.v_push((-a).to_bits() as i64)?; }
+                0x8D => { let a = f32::from_bits(self.v_pop()? as u32); self.v_push(libm::ceilf(a).to_bits() as i64)?; }
+                0x8E => { let a = f32::from_bits(self.v_pop()? as u32); self.v_push(libm::floorf(a).to_bits() as i64)?; }
+                0x8F => { let a = f32::from_bits(self.v_pop()? as u32); self.v_push(libm::truncf(a).to_bits() as i64)?; }
+                0x90 => { let a = f32::from_bits(self.v_pop()? as u32); self.v_push(libm::rintf(a).to_bits() as i64)?; }
+                0x91 => { let a = f32::from_bits(self.v_pop()? as u32); self.v_push(libm::sqrtf(a).to_bits() as i64)?; }
+                0x92 => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push((a + b).to_bits() as i64)?; }
+                0x93 => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push((a - b).to_bits() as i64)?; }
+                0x94 => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push((a * b).to_bits() as i64)?; }
+                0x95 => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push((a / b).to_bits() as i64)?; }
+                0x96 => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push(libm::fminf(a, b).to_bits() as i64)?; }
+                0x97 => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push(libm::fmaxf(a, b).to_bits() as i64)?; }
+                0x98 => { let b = f32::from_bits(self.v_pop()? as u32); let a = f32::from_bits(self.v_pop()? as u32); self.v_push(libm::copysignf(a, b).to_bits() as i64)?; }
+
+                // ── f64 arithmetic (0x99–0xA6) ────────────────────────────────
+                0x99 => { let a = f64::from_bits(self.v_pop()? as u64); self.v_push(a.abs().to_bits() as i64)?; }
+                0x9A => { let a = f64::from_bits(self.v_pop()? as u64); self.v_push((-a).to_bits() as i64)?; }
+                0x9B => { let a = f64::from_bits(self.v_pop()? as u64); self.v_push(libm::ceil(a).to_bits() as i64)?; }
+                0x9C => { let a = f64::from_bits(self.v_pop()? as u64); self.v_push(libm::floor(a).to_bits() as i64)?; }
+                0x9D => { let a = f64::from_bits(self.v_pop()? as u64); self.v_push(libm::trunc(a).to_bits() as i64)?; }
+                0x9E => { let a = f64::from_bits(self.v_pop()? as u64); self.v_push(libm::rint(a).to_bits() as i64)?; }
+                0x9F => { let a = f64::from_bits(self.v_pop()? as u64); self.v_push(libm::sqrt(a).to_bits() as i64)?; }
+                0xA0 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push((a + b).to_bits() as i64)?; }
+                0xA1 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push((a - b).to_bits() as i64)?; }
+                0xA2 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push((a * b).to_bits() as i64)?; }
+                0xA3 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push((a / b).to_bits() as i64)?; }
+                0xA4 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push(libm::fmin(a, b).to_bits() as i64)?; }
+                0xA5 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push(libm::fmax(a, b).to_bits() as i64)?; }
+                0xA6 => { let b = f64::from_bits(self.v_pop()? as u64); let a = f64::from_bits(self.v_pop()? as u64); self.v_push(libm::copysign(a, b).to_bits() as i64)?; }
+
+                // ── float → integer conversions ───────────────────────────────
+                0xA8 => { // i32.trunc_f32_s
+                    let a = f32::from_bits(self.v_pop()? as u32);
+                    if a.is_nan() || a >= 2147483648.0_f32 || a < -2147483648.0_f32 { return Err(InterpError::InvalidConversion); }
+                    self.v_push(a as i32 as i64)?;
+                }
+                0xA9 => { // i32.trunc_f32_u
+                    let a = f32::from_bits(self.v_pop()? as u32);
+                    if a.is_nan() || a >= 4294967296.0_f32 || a < 0.0_f32 { return Err(InterpError::InvalidConversion); }
+                    self.v_push(a as u32 as i64)?;
+                }
+                0xAA => { // i32.trunc_f64_s
+                    let a = f64::from_bits(self.v_pop()? as u64);
+                    if a.is_nan() || a >= 2147483648.0_f64 || a < -2147483648.0_f64 { return Err(InterpError::InvalidConversion); }
+                    self.v_push(a as i32 as i64)?;
+                }
+                0xAB => { // i32.trunc_f64_u
+                    let a = f64::from_bits(self.v_pop()? as u64);
+                    if a.is_nan() || a >= 4294967296.0_f64 || a < 0.0_f64 { return Err(InterpError::InvalidConversion); }
+                    self.v_push(a as u32 as i64)?;
+                }
+                0xAE => { // i64.trunc_f32_s
+                    let a = f32::from_bits(self.v_pop()? as u32);
+                    if a.is_nan() || a >= 9223372036854775808.0_f32 || a < -9223372036854775808.0_f32 { return Err(InterpError::InvalidConversion); }
+                    self.v_push(a as i64)?;
+                }
+                0xAF => { // i64.trunc_f32_u
+                    let a = f32::from_bits(self.v_pop()? as u32);
+                    if a.is_nan() || a >= 18446744073709551616.0_f32 || a < 0.0_f32 { return Err(InterpError::InvalidConversion); }
+                    self.v_push(a as u64 as i64)?;
+                }
+                0xB0 => { // i64.trunc_f64_s
+                    let a = f64::from_bits(self.v_pop()? as u64);
+                    if a.is_nan() || a >= 9223372036854775808.0_f64 || a < -9223372036854775808.0_f64 { return Err(InterpError::InvalidConversion); }
+                    self.v_push(a as i64)?;
+                }
+                0xB1 => { // i64.trunc_f64_u
+                    let a = f64::from_bits(self.v_pop()? as u64);
+                    if a.is_nan() || a >= 18446744073709551616.0_f64 || a < 0.0_f64 { return Err(InterpError::InvalidConversion); }
+                    self.v_push(a as u64 as i64)?;
+                }
+                // ── integer → float conversions ───────────────────────────────
+                0xB2 => { let a = self.v_pop()? as i32; self.v_push((a as f32).to_bits() as i64)?; } // f32.convert_i32_s
+                0xB3 => { let a = self.v_pop()? as u32; self.v_push((a as f32).to_bits() as i64)?; } // f32.convert_i32_u
+                0xB4 => { let a = self.v_pop()?;        self.v_push((a as f32).to_bits() as i64)?; } // f32.convert_i64_s
+                0xB5 => { let a = self.v_pop()? as u64; self.v_push((a as f32).to_bits() as i64)?; } // f32.convert_i64_u
+                0xB6 => { let a = f64::from_bits(self.v_pop()? as u64); self.v_push((a as f32).to_bits() as i64)?; } // f32.demote_f64
+                0xB7 => { let a = self.v_pop()? as i32; self.v_push((a as f64).to_bits() as i64)?; } // f64.convert_i32_s
+                0xB8 => { let a = self.v_pop()? as u32; self.v_push((a as f64).to_bits() as i64)?; } // f64.convert_i32_u
+                0xB9 => { let a = self.v_pop()?;        self.v_push((a as f64).to_bits() as i64)?; } // f64.convert_i64_s
+                0xBA => { let a = self.v_pop()? as u64; self.v_push((a as f64).to_bits() as i64)?; } // f64.convert_i64_u
+                0xBB => { let a = f32::from_bits(self.v_pop()? as u32); self.v_push((a as f64).to_bits() as i64)?; } // f64.promote_f32
+                // ── reinterpret ───────────────────────────────────────────────
+                0xBC => { let a = self.v_pop()? as i32; self.v_push(a.to_le_bytes().iter().fold(0u32, |acc, &b| (acc << 8) | b as u32).swap_bytes() as i64)?; } // i32.reinterpret_f32
+                0xBD => {} // i64.reinterpret_f64 — bits already correct, no-op
+                0xBE => {} // f32.reinterpret_i32 — bits already correct, no-op
+                0xBF => {} // f64.reinterpret_i64 — bits already correct, no-op
+
+                // ── saturating trunc (0xFC prefix) ────────────────────────────
+                0xFC => {
+                    let fi   = self.fdepth - 1;
+                    let pc   = self.frames[fi].pc;
+                    let body = self.bodies[self.frames[fi].body_idx];
+                    let (sub_op, consumed) = read_u32_leb128(&body[pc..])
+                        .ok_or(InterpError::MalformedCode)?;
+                    self.frames[fi].pc += consumed;
+                    match sub_op {
+                        0 => { // i32.trunc_sat_f32_s
+                            let a = f32::from_bits(self.v_pop()? as u32);
+                            let v = if a.is_nan() { 0i32 } else if a >= 2147483648.0_f32 { i32::MAX } else if a < -2147483648.0_f32 { i32::MIN } else { a as i32 };
+                            self.v_push(v as i64)?;
+                        }
+                        1 => { // i32.trunc_sat_f32_u
+                            let a = f32::from_bits(self.v_pop()? as u32);
+                            let v = if a.is_nan() || a < 0.0 { 0u32 } else if a >= 4294967296.0_f32 { u32::MAX } else { a as u32 };
+                            self.v_push(v as i64)?;
+                        }
+                        2 => { // i32.trunc_sat_f64_s
+                            let a = f64::from_bits(self.v_pop()? as u64);
+                            let v = if a.is_nan() { 0i32 } else if a >= 2147483648.0_f64 { i32::MAX } else if a < -2147483648.0_f64 { i32::MIN } else { a as i32 };
+                            self.v_push(v as i64)?;
+                        }
+                        3 => { // i32.trunc_sat_f64_u
+                            let a = f64::from_bits(self.v_pop()? as u64);
+                            let v = if a.is_nan() || a < 0.0 { 0u32 } else if a >= 4294967296.0_f64 { u32::MAX } else { a as u32 };
+                            self.v_push(v as i64)?;
+                        }
+                        4 => { // i64.trunc_sat_f32_s
+                            let a = f32::from_bits(self.v_pop()? as u32);
+                            let v = if a.is_nan() { 0i64 } else if a >= 9223372036854775808.0_f32 { i64::MAX } else if a < -9223372036854775808.0_f32 { i64::MIN } else { a as i64 };
+                            self.v_push(v)?;
+                        }
+                        5 => { // i64.trunc_sat_f32_u
+                            let a = f32::from_bits(self.v_pop()? as u32);
+                            let v = if a.is_nan() || a < 0.0 { 0u64 } else if a >= 18446744073709551616.0_f32 { u64::MAX } else { a as u64 };
+                            self.v_push(v as i64)?;
+                        }
+                        6 => { // i64.trunc_sat_f64_s
+                            let a = f64::from_bits(self.v_pop()? as u64);
+                            let v = if a.is_nan() { 0i64 } else if a >= 9223372036854775808.0_f64 { i64::MAX } else if a < -9223372036854775808.0_f64 { i64::MIN } else { a as i64 };
+                            self.v_push(v)?;
+                        }
+                        7 => { // i64.trunc_sat_f64_u
+                            let a = f64::from_bits(self.v_pop()? as u64);
+                            let v = if a.is_nan() || a < 0.0 { 0u64 } else if a >= 18446744073709551616.0_f64 { u64::MAX } else { a as u64 };
+                            self.v_push(v as i64)?;
+                        }
+                        _ => return Err(InterpError::UnknownOpcode(0xFC)),
+                    }
+                }
 
                 // ── call ──────────────────────────────────────────────────────
                 OP_CALL => {
@@ -988,6 +1460,9 @@ fn scan_block_end(body: &[u8], start: usize) -> Option<(usize, usize)> {
             0x43 => { i += 4; }
             // f64.const: 8 bytes literal.
             0x44 => { i += 8; }
+            // 0xFC prefix (saturating trunc, bulk-memory, etc.): consume sub-opcode.
+            // Without this, sub-opcodes 0x02–0x05 would be mis-read as block/loop/if/else.
+            0xFC => { i += skip_leb128(body, i)?; }
             // All other opcodes have no immediates.
             _ => {}
         }

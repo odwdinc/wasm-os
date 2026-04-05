@@ -7,3 +7,4 @@ edition = "2021"
 shared = { path = "../shared" }
 bootloader_api = "0.11"
 spin = "0.9"
+libm = { version = "0.2", default-features = false }
