@@ -14,16 +14,16 @@
     end
 
     ;; print header
-    ;; i32.const 0
-    ;; i32.const 18
-    ;; call $print
+    i32.const 0
+    i32.const 18
+    call $print
 
     ;; loop until n == 1
     block $break
       loop $loop
         ;; print current n
-        ;; local.get $n
-        ;; call $print_int
+        local.get $n
+        call $print_int
 
         ;; if n == 1, break
         local.get $n

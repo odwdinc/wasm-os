@@ -1,0 +1,16 @@
+[workspace]  # opt out of the parent workspace; this crate targets the host
+
+[package]
+name = "wasm-test"
+version = "0.1.0"
+edition = "2021"
+
+# Run with: cd wasm-test && cargo test
+
+[dependencies]
+# Same libm the kernel uses; interp.rs calls libm:: for float ops.
+libm = { version = "0.2", default-features = false }
+
+[dev-dependencies]
+# Compiles WAT source text to a WASM byte vec at test time.
+wat = "1"

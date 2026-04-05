@@ -1,0 +1,4 @@
+[build]
+# Override the workspace-root config that sets target = "x86_64-unknown-none".
+# This crate must build for the host so that std tests run.
+target = "x86_64-unknown-linux-gnu"

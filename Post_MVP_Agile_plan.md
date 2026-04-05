@@ -50,12 +50,12 @@ can execute without hitting unsupported opcode errors.
 > ⚠️ No FPU in kernel mode by default — requires explicit SSE/x87 state save or soft-float.
 > Soft-float (pure Rust) is simpler but slower. SSE needs `CR0.EM` cleared and `FXSAVE` in context switch.
 
-* [ ] Decide: soft-float vs SSE (recommend soft-float for correctness first)
-* [ ] `f32.const`, `f64.const`
-* [ ] `f32.add/sub/mul/div`, `f64.add/sub/mul/div`
-* [ ] `f32.eq/ne/lt/gt/le/ge`, same for f64
-* [ ] `f32.load`, `f32.store`, `f64.load`, `f64.store`
-* [ ] `i32.trunc_f32_s`, `f32.convert_i32_s`, and related conversions
+* [x] Decide: soft-float vs SSE (recommend soft-float for correctness first)
+* [x] `f32.const`, `f64.const`
+* [x] `f32.add/sub/mul/div`, `f64.add/sub/mul/div`
+* [x] `f32.eq/ne/lt/gt/le/ge`, same for f64
+* [x] `f32.load`, `f32.store`, `f64.load`, `f64.store`
+* [x] `i32.trunc_f32_s`, `f32.convert_i32_s`, and related conversions
 
 ---
 
@@ -157,7 +157,7 @@ Each `run` call gets a clean, isolated instance.
 
 ---
 
-## Done When
+## Done When ✅
 
 ```
 > run hello.wasm
@@ -227,7 +227,7 @@ Long-running modules don't freeze the terminal.
 
 ---
 
-## Done When
+## Done When ✅
 
 ```
 > task-run counter.wasm
@@ -296,7 +296,7 @@ rebuilding the kernel.
 
 ---
 
-## Done When
+## Done When ✅
 
 1. Pack `hello.wasm` into `fs.img` with `tools/pack-fs.sh`
 2. Boot QEMU with `fs.img`
