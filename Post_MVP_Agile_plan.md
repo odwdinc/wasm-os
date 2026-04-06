@@ -433,30 +433,29 @@ No host toolchain required.
 
 ### 1. WAT Tokenizer
 
-* [ ] Token types: `(`, `)`, keyword, string literal, integer, float, identifier (`$name`)
-* [ ] Fixed-size token buffer (no heap)
-* [ ] Handles `;;` line comments
+* [x] Token types: `(`, `)`, keyword, string literal, integer, float, identifier (`$name`)
+* [x] Handles `;;` line comments
 
 ---
 
 ### 2. WAT Parser → WASM Binary Emitter
 
-* [ ] Parse `(module ...)` structure
-* [ ] Emit type section from `(func (param ...) (result ...))`
-* [ ] Emit import section from `(import ...)`
-* [ ] Emit function / code sections from `(func ...)`
-* [ ] Emit memory section from `(memory ...)`
-* [ ] Emit data section from `(data ...)`
-* [ ] Emit export section from `(export ...)`
-* [ ] Write output to FS as `.wasm`
+* [x] Parse `(module ...)` structure
+* [x] Emit type section from `(func (param ...) (result ...))`
+* [x] Emit import section from `(import ...)`
+* [x] Emit function / code sections from `(func ...)`
+* [x] Emit memory section from `(memory ...)`
+* [x] Emit data section from `(data ...)`
+* [x] Emit export section from `(export ...)`
+* [x] Write output to FS as `.wasm`
 
 ---
 
 ### 3. Shell Integration
 
-* [ ] `edit <file.wat>` — line-append editor with `save`/`quit`
-* [ ] `asm <file.wat>` — assemble to `<file.wasm>`
-* [ ] Full round-trip: edit → asm → run
+* [x] `edit <file.wat>` — line-append editor with `save`/`quit`
+* [x] `asm <file.wat>` — assemble to `<file.wasm>`
+* [x] Full round-trip: edit → asm → run
 
 ---
 

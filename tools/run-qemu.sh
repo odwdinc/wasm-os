@@ -68,6 +68,7 @@ echo "booting $IMG  [profile=$PROFILE${DISPLAY_ARGS:+, headless}]..."
 echo "serial → stdio  (Ctrl-A X to quit)"
 # shellcheck disable=SC2086
 qemu-system-x86_64 \
+    -machine accel=kvm,type=q35 \
     -drive format=raw,file="$IMG" \
     $FS_DRIVE \
     -m 512M \

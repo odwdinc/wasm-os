@@ -113,6 +113,7 @@ pub fn run_command(line: &str) {
         "save"      => commands::save::run(),
         "write"     => commands::write::run(&argv[1..argc]),
         "edit"      => commands::edit::run(&argv[1..argc]),
+        "asm"       => commands::asm::run(&argv[1..argc]),
         "cat"       => commands::cat::run(&argv[1..argc]),
         "cd"        => commands::cd::run(&argv[1..argc]),
         "mkdir"     => commands::mkdir::run(&argv[1..argc]),

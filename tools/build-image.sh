@@ -19,10 +19,25 @@ fi
 echo "[1/4] compiling userland modules..."
 "$SCRIPT_DIR/wasm-pack.sh"
 
-# 2. Pack .wasm files into fs.img (WasmFS format — embedded by the kernel).
-echo "[2/4] packing filesystem image..."
+STAMP_FILE="$ROOT/.fs_hash"
+
+echo "[2/4] checking filesystem inputs..."
+
 mapfile -d '' WASM_FILES < <(find "$ROOT/userland" -name "*.wasm" -print0 | sort -z)
-"$SCRIPT_DIR/pack-fs.sh" "${WASM_FILES[@]}"
+
+# Compute combined hash
+NEW_HASH=$(printf '%s\0' "${WASM_FILES[@]}" | xargs -0 sha256sum | sha256sum | cut -d ' ' -f1)
+
+OLD_HASH=""
+[ -f "$STAMP_FILE" ] && OLD_HASH=$(cat "$STAMP_FILE")
+
+if [[ "$NEW_HASH" == "$OLD_HASH" ]]; then
+    echo "Filesystem unchanged, skipping build."
+else
+    echo "Changes detected, rebuilding fs.img..."
+    "$SCRIPT_DIR/pack-fs.sh" "${WASM_FILES[@]}"
+    echo "$NEW_HASH" > "$STAMP_FILE"
+fi
 
 # 3. Build the kernel for x86_64-unknown-none.
 echo "[3/4] building kernel (profile: $PROFILE)..."

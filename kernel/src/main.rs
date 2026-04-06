@@ -73,6 +73,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let buf = fb.buffer_mut();
         vga::init(buf, info);
     }
+    println!("vga::init - framebuffer");
 
     // Initialise physical-address translation for virtio DMA ring setup.
     // The bootloader maps all physical memory at a dynamic virtual offset;
@@ -87,6 +88,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             loop {}
         }
     };
+    println!("memory::init");
     memory::init(phys_mem_off);
     // Mount FAT filesystem — virtio-blk for true persistence, ramdisk fallback.
     let mounted_virtio = if let Some(blk) = drivers::virtio_blk::VirtioBlk::try_init() {

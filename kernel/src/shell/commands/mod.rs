@@ -15,3 +15,4 @@ pub mod run;
 pub mod save;
 pub mod tasks;
 pub mod write;
+pub mod asm;
