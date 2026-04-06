@@ -459,7 +459,7 @@ No host toolchain required.
 
 ---
 
-## Done When
+## Done When ✅
 
 Type this into the OS terminal, with no host tools involved:
 
