@@ -1,13 +1,13 @@
 # AGENTS.md — WASM-First OS
 
-> Bare-metal Rust kernel. WebAssembly as the system ABI. Sprints 1–4 + A–D complete.
+> Bare-metal Rust kernel. WebAssembly as the system ABI. Sprints 1–4 + A–D,G complete.
 
 ---
 
 ## Project Status
 
-Sprints 1–4 (MVP) and A–D (runtime completeness, isolation, cooperative scheduling, persistent FS) are **done**.  
-Sprint G (in-OS WAT assembler — `asm` command) is **in progress**.  
+Sprints 1–4 (MVP) and A–D,G (runtime completeness, isolation, cooperative scheduling, persistent FS, in-OS WAT assembler) are **done**.  
+Sprint E: (Networking) is **in progress**.  
 See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdown.
 
 ---
@@ -90,13 +90,13 @@ See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdo
 │
 ├── tools/
 │   ├── wasm-pack.sh             # Step 1: compile userland/*.wat → *.wasm
-│   ├── build-image.sh           # Step 2: wasm-pack + cargo build + disk image
-│   └── run-qemu.sh              # Step 3: build-image + launch QEMU
+│   ├── pack-fs.sh               # Step 2: build fs.img, and disk.img form userland/ *.wasm
+│   ├── build-image.sh           # Step 3: wasm-pack + cargo build + disk image
+│   └── run-qemu.sh              # Step 4: build-image + launch QEMU
 │
 └── docs/
     ├── architecture.md          # System design: all components, host interface
-    ├── wasm-runtime.md          # Interpreter internals, opcode tables, error types
-    └── roadmap.md               # Sprint-by-sprint plan
+    └─── wasm-runtime.md         # Interpreter internals, opcode tables, error types
 ```
 
 ---
@@ -209,14 +209,7 @@ Registry capacity: `MAX_HOST_FUNCS = 32`.
 ---
 
 ## Build Pipeline
-
-```bash
-./tools/run-qemu.sh          # full pipeline (wasm-pack + build + QEMU)
-./tools/build-image.sh       # wasm-pack + kernel build + disk image only
-./tools/wasm-pack.sh         # compile userland .wat → .wasm only
-```
-
-**Run `wasm-pack.sh` before building the kernel** if you change any `.wat` files.
+The user will run all build commands.
 
 ---
 
@@ -224,8 +217,7 @@ Registry capacity: `MAX_HOST_FUNCS = 32`.
 
 1. Create `userland/<name>/<name>.wat`
 2. Import host functions from `"env"` and export `main`
-3. Run `tools/wasm-pack.sh` to produce the `.wasm` file
-4. The file will be loaded at boot via `load_fat_files_to_table()`  
+3. The file will be loaded at boot via `load_fat_files_to_table()`  
    (or add it to `fs.img` via `tools/pack-fs.sh` for embedded fallback)
 
 ---
@@ -246,7 +238,7 @@ Registry capacity: `MAX_HOST_FUNCS = 32`.
 3. **No heap in the WASM core** — `loader.rs` and `interp.rs` are allocation-free; the engine uses static pools
 4. **Kernel stack budget** — `Interpreter` is ~70 KiB stack-allocated; total stack is 1 MiB (set in `main.rs`)
 5. Document all `unsafe` blocks with a `// SAFETY:` comment explaining the invariant
-6. Keep rustdoc on all public items — run `cargo doc --no-deps` to check
+6. Keep rustdoc on all public items.
 
 ---
 
@@ -257,14 +249,12 @@ When implementing a sprint task:
 1. Read the relevant source files before writing anything
 2. Identify the minimal change — don't expand scope
 3. Keep fixed-size limits conservative (increase only when a real test fails)
-4. After changes verify the system still boots (`./tools/run-qemu.sh headless`)
+4. After changes have the user verify the system still boots (`./tools/run-qemu.sh headless`)
 5. Update `AGENTS.md`, `README.md`, `docs/architecture.md`, and `docs/wasm-runtime.md` if the public interface changes
 6. Ensure rustdoc is present on all new public items
 
 ---
 
-## Current Work (Sprint G — In-OS WAT Assembler)
-
-The `asm` shell command (`shell/commands/asm.rs`) is the entry point for the in-kernel assembler.  Goal: allow writing, assembling, and running a WASM module entirely inside the OS without any host tools.
+## Current Work (Sprint E: Networking)
 
 See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full task breakdown.
