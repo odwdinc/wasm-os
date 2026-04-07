@@ -13,7 +13,7 @@
 use bootloader_api::info::{FrameBufferInfo, PixelFormat};
 use spin::Mutex;
 
-use core::fmt::{Write, Arguments};
+use core::fmt::{Write};
 use alloc::string::String;
 
 // ANSI SGR — reset

@@ -250,6 +250,7 @@ fn host_read_char(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Resul
             Key::Delete => continue,
             Key::Home => continue,
             Key::End => continue,
+            Key::Tab => continue,
         }
     };
     vstack[*vsp] = code as i64;

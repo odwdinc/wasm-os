@@ -1,7 +1,8 @@
-use core::fmt::{self, Write};
+use core::fmt::{self};
 use alloc::string::String;
 use alloc::vec::Vec;
 use crate::drivers::keyboard::{try_next_key, Key};
+use crate::alloc::string::ToString;
 
 const PROMPT: &str = "> ";
 
@@ -35,6 +36,7 @@ impl CommandLineEditor {
             Key::End => self.move_end(),
             Key::ArrowUp => self.navigate_history_up(),
             Key::ArrowDown => self.navigate_history_down(),
+            Key::Tab => self.auto_complete(),
             Key::Enter => {},
             Key::Unknown => {}
         }
@@ -141,6 +143,34 @@ impl CommandLineEditor {
             _ => self.handle_key(key),
         }
         None
+    }
+
+   fn auto_complete(&mut self) {
+    let names = crate::shell::command_names();
+    let matches: Vec<&str> = names.iter()
+        .map(|s| s.as_str())
+        .filter(|command| command.starts_with(self.buffer.as_str()))
+        .collect();
+
+        if matches.is_empty() {
+            return;
+        } else if matches.len() == 1 {
+            // Complete the command
+            let completion = matches[0];
+            self.buffer = completion.to_string();
+            self.cursor_pos = self.buffer.len();
+            self.needs_render = true;
+        } else {
+            // Show all possible completions
+            crate::println!();
+            for match_ in &matches {
+                crate::print!("{} ", match_);
+            }
+            crate::println!();
+            self.needs_render = true;
+        }
+        // Re-render the current input line
+        self.render();
     }
 
     /// Mark the prompt as needing a redraw on the next `render()` call.

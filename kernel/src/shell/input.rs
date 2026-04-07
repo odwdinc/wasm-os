@@ -92,7 +92,7 @@ pub fn read_line(buf: &mut [u8]) -> Option<&str> {
             Key::Delete => {},
             Key::Home => {},
             Key::End => {},
-            
+            Key::Tab => {},
             Key::Unknown => {}
         }
     }

@@ -36,9 +36,11 @@ pub enum Key {
     Delete,
     Home,
     End,
+    Tab,
     /// Any scancode that could not be mapped to a character.
     Unknown,
 }
+
 
 /// Non-blocking: decode one scancode if the PS/2 buffer has data.
 /// Returns `None` if no data is ready.
@@ -67,7 +69,7 @@ pub fn try_next_key() -> Option<Key> {
         0x53 => Key::Delete,
         0x47 => Key::Home,
         0x4F => Key::End,
-
+        0x0F => Key::Tab,
         _ => match scancode_to_char(sc, shift) {
             Some(c) => Key::Char(c),
             None    => Key::Unknown,
@@ -115,6 +117,7 @@ pub fn next_key() -> Key {
             0x53 => Key::Delete,
             0x47 => Key::Home,
             0x4F => Key::End,
+            0x0F => Key::Tab,
             _ => match scancode_to_char(sc, shift) {
                 Some(c) => Key::Char(c),
                 None => Key::Unknown,

@@ -7,6 +7,12 @@
 pub mod input;
 mod commands;
 mod command_line_editor;
+use alloc::vec::Vec;
+use alloc::vec;
+use crate::alloc::string::ToString;
+use alloc::string::String;
+
+
 
 // ─── Working directory ────────────────────────────────────────────────────────
 
@@ -103,56 +109,127 @@ pub(crate) fn history_get(i: usize) -> &'static str {
 /// Lines that are empty or start with `'#'` are silently ignored.
 /// Non-empty lines are added to the history ring buffer before dispatch.
 /// Unknown command names print `"unknown command: <name>"`.
-pub fn run_command(line: &str) {
-    if line.is_empty() || line.starts_with('#') {
-        return;
-    }
+macro_rules! define_commands {
+    ( $argv:ident, $argc:ident; $( $name:literal => $handler:expr ),* $(,)? ) => {
+        pub fn command_names() -> Vec<String> {
+            let mut names = vec![ $( $name.to_string() ),* ];
+            let mut wasm_names = Vec::new();
+            crate::fs::for_each_file(|name, _size| {
+                if name.ends_with(".wasm") {
+                    if let Some(stem) = name.strip_suffix(".wasm") {
+                        wasm_names.push(stem.to_string());
+                    }
+                }
+            });
+            names.extend(wasm_names);
+            names
+        }
 
-    unsafe { (*core::ptr::addr_of_mut!(HISTORY)).push(line); }
+        pub fn run_command(line: &str) {
+            if line.is_empty() || line.starts_with('#') {
+                return;
+            }
+            unsafe { (*core::ptr::addr_of_mut!(HISTORY)).push(line); }
+            let mut $argv = [""; MAX_ARGS];
+            let $argc = match tokenize(line, &mut $argv) {
+                Ok(n)  => n,
+                Err(_) => { crate::println!("error: too many arguments"); return; }
+            };
+            if $argc == 0 { return; }
 
-    let mut argv = [""; MAX_ARGS];
-    let argc = match tokenize(line, &mut argv) {
-        Ok(n)  => n,
-        Err(_) => { crate::println!("error: too many arguments"); return; }
-    };
-    if argc == 0 { return; }
-
-    match argv[0] {
-        "help"      => commands::help::run(),
-        "echo"      => commands::echo::run(&argv[1..argc]),
-        "history"   => commands::history::run(),
-        "clear"     => commands::clear::run(),
-        "ls"        => commands::ls::run(),
-        "rm"        => commands::rm::run(&argv[1..argc]),
-        "save"      => commands::save::run(),
-        "write"     => commands::write::run(&argv[1..argc]),
-        "edit"      => commands::edit::run(&argv[1..argc]),
-        "asm"       => commands::asm::run(&argv[1..argc]),
-        "cat"       => commands::cat::run(&argv[1..argc]),
-        "cd"        => commands::cd::run(&argv[1..argc]),
-        "mkdir"     => commands::mkdir::run(&argv[1..argc]),
-        "df"        => commands::df::run(),
-        "info"      => commands::info::run(argv.get(1).copied().unwrap_or("")),
-        "run"       => commands::run::run(&argv[1..argc]),
-        "ps"        => commands::ps::run(),
-        "task-run"  => commands::tasks::task_run(&argv[1..argc]),
-        "task-kill" => commands::tasks::task_kill(&argv[1..argc]),
-        "tasks"     => commands::tasks::list(),
-        _ => {
-            // If <name>.wasm exists on the filesystem, auto-spawn it as a task.
-            let mut wasm_buf = [0u8; MAX_LINE + 5];
-            let nb = argv[0].as_bytes();
-            wasm_buf[..nb.len()].copy_from_slice(nb);
-            wasm_buf[nb.len()..nb.len() + 5].copy_from_slice(b".wasm");
-            let wasm_name = core::str::from_utf8(&wasm_buf[..nb.len() + 5]).unwrap_or("");
-            if !wasm_name.is_empty() && crate::fs::find_file(wasm_name).is_some() {
-                commands::tasks::task_run_with(wasm_name, &argv[1..argc]);
-            } else {
-                crate::println!("unknown command: {}", argv[0]);
+            match $argv[0] {
+                $( $name => $handler, )*
+                _ => {
+                    let mut wasm_buf = [0u8; MAX_LINE + 5];
+                    let nb = $argv[0].as_bytes();
+                    wasm_buf[..nb.len()].copy_from_slice(nb);
+                    wasm_buf[nb.len()..nb.len() + 5].copy_from_slice(b".wasm");
+                    let wasm_name = core::str::from_utf8(&wasm_buf[..nb.len() + 5]).unwrap_or("");
+                    if !wasm_name.is_empty() && crate::fs::find_file(wasm_name).is_some() {
+                        commands::tasks::task_run_with(wasm_name, &$argv[1..$argc]);
+                    } else {
+                        crate::println!("unknown command: {}", $argv[0]);
+                    }
+                }
             }
         }
-    }
+    };
 }
+
+define_commands! {
+    argv, argc;
+    "help"      => commands::help::run(),
+    "echo"      => commands::echo::run(&argv[1..argc]),
+    "history"   => commands::history::run(),
+    "clear"     => commands::clear::run(),
+    "ls"        => commands::ls::run(),
+    "rm"        => commands::rm::run(&argv[1..argc]),
+    "save"      => commands::save::run(),
+    "write"     => commands::write::run(&argv[1..argc]),
+    "edit"      => commands::edit::run(&argv[1..argc]),
+    "asm"       => commands::asm::run(&argv[1..argc]),
+    "cat"       => commands::cat::run(&argv[1..argc]),
+    "cd"        => commands::cd::run(&argv[1..argc]),
+    "mkdir"     => commands::mkdir::run(&argv[1..argc]),
+    "df"        => commands::df::run(),
+    "info"      => commands::info::run(argv.get(1).copied().unwrap_or("")),
+    "run"       => commands::run::run(&argv[1..argc]),
+    "ps"        => commands::ps::run(),
+    "task-run"  => commands::tasks::task_run(&argv[1..argc]),
+    "task-kill" => commands::tasks::task_kill(&argv[1..argc]),
+    "tasks"     => commands::tasks::list(),
+}
+
+// pub fn run_command(line: &str) {
+//     if line.is_empty() || line.starts_with('#') {
+//         return;
+//     }
+
+//     unsafe { (*core::ptr::addr_of_mut!(HISTORY)).push(line); }
+
+//     let mut argv = [""; MAX_ARGS];
+//     let argc = match tokenize(line, &mut argv) {
+//         Ok(n)  => n,
+//         Err(_) => { crate::println!("error: too many arguments"); return; }
+//     };
+//     if argc == 0 { return; }
+
+//     match argv[0] {
+//         "help"      => commands::help::run(),
+//         "echo"      => commands::echo::run(&argv[1..argc]),
+//         "history"   => commands::history::run(),
+//         "clear"     => commands::clear::run(),
+//         "ls"        => commands::ls::run(),
+//         "rm"        => commands::rm::run(&argv[1..argc]),
+//         "save"      => commands::save::run(),
+//         "write"     => commands::write::run(&argv[1..argc]),
+//         "edit"      => commands::edit::run(&argv[1..argc]),
+//         "asm"       => commands::asm::run(&argv[1..argc]),
+//         "cat"       => commands::cat::run(&argv[1..argc]),
+//         "cd"        => commands::cd::run(&argv[1..argc]),
+//         "mkdir"     => commands::mkdir::run(&argv[1..argc]),
+//         "df"        => commands::df::run(),
+//         "info"      => commands::info::run(argv.get(1).copied().unwrap_or("")),
+//         "run"       => commands::run::run(&argv[1..argc]),
+//         "ps"        => commands::ps::run(),
+//         "task-run"  => commands::tasks::task_run(&argv[1..argc]),
+//         "task-kill" => commands::tasks::task_kill(&argv[1..argc]),
+//         "tasks"     => commands::tasks::list(),
+//         _ => {
+//             // If <name>.wasm exists on the filesystem, auto-spawn it as a task.
+//             let mut wasm_buf = [0u8; MAX_LINE + 5];
+//             let nb = argv[0].as_bytes();
+//             wasm_buf[..nb.len()].copy_from_slice(nb);
+//             wasm_buf[nb.len()..nb.len() + 5].copy_from_slice(b".wasm");
+//             let wasm_name = core::str::from_utf8(&wasm_buf[..nb.len() + 5]).unwrap_or("");
+//             if !wasm_name.is_empty() && crate::fs::find_file(wasm_name).is_some() {
+//                 commands::tasks::task_run_with(wasm_name, &argv[1..argc]);
+//             } else {
+//                 crate::println!("unknown command: {}", argv[0]);
+//             }
+//         }
+//     }
+// }
 
 // ─── Tokenizer ────────────────────────────────────────────────────────────────
 
