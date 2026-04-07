@@ -1,6 +1,8 @@
-/// WASM binary loader — validates the header and splits the binary into
-/// named section byte-slices.  No heap allocation; all slices point into
-/// the original `bytes` buffer.
+//! WASM binary loader — validates the magic/version header and splits the
+//! binary into named section byte-slices.
+//!
+//! No heap allocation is performed.  Every field of [`Module`] is an
+//! `Option<&'a [u8]>` that points directly into the input buffer.
 
 // ── Section IDs ─────────────────────────────────────────────────────────────
 pub const SECTION_TYPE:     u8 = 1;
@@ -18,16 +20,24 @@ const MAGIC:   [u8; 4] = [0x00, 0x61, 0x73, 0x6D]; // "\0asm"
 const VERSION: [u8; 4] = [0x01, 0x00, 0x00, 0x00];
 
 // ── Error type ───────────────────────────────────────────────────────────────
+
+/// Errors that can occur while parsing a WASM binary.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LoadError {
+    /// Binary is shorter than the 8-byte header.
     TooShort,
+    /// Magic bytes (`\0asm`) are missing or wrong.
     BadMagic,
+    /// Version field is not `0x01 0x00 0x00 0x00`.
     BadVersion,
+    /// A LEB-128 integer could not be decoded.
     InvalidLeb128,
+    /// A section's declared byte-length runs past the end of the buffer.
     UnexpectedEof,
 }
 
 impl LoadError {
+    /// Return a human-readable description of the error.
     pub fn as_str(self) -> &'static str {
         match self {
             LoadError::TooShort      => "binary too short",
@@ -40,25 +50,41 @@ impl LoadError {
 }
 
 // ── Parsed module ────────────────────────────────────────────────────────────
-/// Holds zero-copy slices into the original binary buffer.
-/// Only the sections the interpreter actually needs are captured;
-/// everything else is skipped over silently.
+
+/// Zero-copy view of a WASM binary's sections.
+///
+/// Every field is a raw byte slice borrowed from the original `bytes` buffer
+/// passed to [`load`].  Unknown sections (e.g. custom/debug) are silently
+/// skipped; unused sections remain `None`.
 pub struct Module<'a> {
+    /// Type section (function signatures).
     pub type_section:     Option<&'a [u8]>,
+    /// Import section (host functions / memories / tables / globals).
     pub import_section:   Option<&'a [u8]>,
+    /// Function section (type-index per defined function).
     pub function_section: Option<&'a [u8]>,
+    /// Table section (function-reference tables).
     pub table_section:    Option<&'a [u8]>,
+    /// Memory section (linear memory limits).
     pub memory_section:   Option<&'a [u8]>,
+    /// Global section (mutable/immutable globals with init expressions).
     pub global_section:   Option<&'a [u8]>,
+    /// Export section (exported functions, memories, tables, globals).
     pub export_section:   Option<&'a [u8]>,
+    /// Element section (function-table initializers).
     pub element_section:  Option<&'a [u8]>,
+    /// Code section (function bodies).
     pub code_section:     Option<&'a [u8]>,
+    /// Data section (linear-memory initializers).
     pub data_section:     Option<&'a [u8]>,
 }
 
 // ── LEB-128 helper ───────────────────────────────────────────────────────────
+
 /// Decode an unsigned 32-bit LEB-128 integer from the front of `bytes`.
-/// Returns `(value, bytes_consumed)` or `None` on malformed input.
+///
+/// Returns `Some((value, bytes_consumed))` on success, or `None` if the
+/// encoding is truncated or would overflow a `u32`.
 pub fn read_u32_leb128(bytes: &[u8]) -> Option<(u32, usize)> {
     let mut result: u32 = 0;
     let mut shift: u32 = 0;
@@ -77,8 +103,11 @@ pub fn read_u32_leb128(bytes: &[u8]) -> Option<(u32, usize)> {
 
 // ── Export section lookup ────────────────────────────────────────────────────
 
-/// Search the export section for an export named `name` with kind = func (0).
-/// Returns the absolute function index (imports included) if found.
+/// Search the export section for a function export named `name`.
+///
+/// Returns the absolute function index (imports counted first) if a matching
+/// function export is found, or `None` if the name is absent, the export is
+/// not a function, or the section is malformed.
 pub fn find_export(module: &Module, name: &str) -> Option<u32> {
     let bytes = module.export_section?;
     let mut cur = 0usize;
@@ -112,9 +141,11 @@ pub fn find_export(module: &Module, name: &str) -> Option<u32> {
 
 // ── Import section iterator ───────────────────────────────────────────────────
 
-/// Call `f(module, name)` for every **function** import in the section, in
-/// declaration order.  Non-function imports (table, memory, global) are skipped.
-/// Silently stops on any parse error.
+/// Iterate over every **function** import in the section, calling
+/// `f(module_name, func_name)` for each one in declaration order.
+///
+/// Non-function imports (table, memory, global) are skipped silently.
+/// Iteration stops early on any parse error.
 pub fn for_each_func_import<F: FnMut(&str, &str)>(section: &[u8], f: &mut F) {
     fn inner<F: FnMut(&str, &str)>(section: &[u8], f: &mut F) -> Option<()> {
         let mut cur = 0usize;
@@ -162,14 +193,16 @@ pub fn for_each_func_import<F: FnMut(&str, &str)>(section: &[u8], f: &mut F) {
 
 // ── Memory section helper ─────────────────────────────────────────────────────
 
-/// Parse the memory section and return the `min` page count.
-/// Returns 0 if the section is absent or malformed.
+/// Parse the memory section and return the minimum page count declared by
+/// the module.
 ///
-/// Memory section layout (WASM MVP):
-///   count : u32 LEB128   (always 1)
-///   flags : u8           (0 = no max, 1 = has max)
-///   min   : u32 LEB128
-///   [max  : u32 LEB128]  (only when flags == 1)
+/// Returns `0` if the section is absent or malformed.  The layout parsed is:
+/// ```text
+/// count : u32 LEB128   (MVP always 1)
+/// flags : u8           (0 = no max, 1 = has max)
+/// min   : u32 LEB128
+/// [max  : u32 LEB128]  (only when flags == 1)
+/// ```
 pub fn read_memory_min_pages(section: &[u8]) -> u32 {
     fn inner(section: &[u8]) -> Option<u32> {
         let mut cur = 0usize;
@@ -185,8 +218,20 @@ pub fn read_memory_min_pages(section: &[u8]) -> u32 {
 }
 
 // ── Main entry point ─────────────────────────────────────────────────────────
-/// Parse `bytes` as a WASM binary.
-/// On success returns a `Module` whose slices reference `bytes` directly.
+
+/// Parse a WASM binary buffer.
+///
+/// Validates the 8-byte header (`\0asm` magic + version `0x1`) and then
+/// iterates over every section, storing a slice pointer for each known
+/// section ID.  Unknown and custom sections (ID 0) are silently skipped.
+///
+/// On success, returns a [`Module`] whose fields borrow directly from
+/// `bytes`.  No allocation is performed.
+///
+/// # Errors
+///
+/// Returns a [`LoadError`] if the header is invalid, a LEB-128 length field
+/// is malformed, or a section length overruns the buffer.
 pub fn load(bytes: &[u8]) -> Result<Module<'_>, LoadError> {
     // ── 1. Header ──
     if bytes.len() < 8 {

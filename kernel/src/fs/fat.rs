@@ -1,10 +1,14 @@
-// fs/fat.rs — FAT filesystem driver using rust-fatfs (no_std + alloc)
-//
-// Wraps our BlockDevice trait into a byte-level Read+Write+Seek adapter so
-// that fatfs can drive it, then mounts a FAT12/16/32 volume.
-//
-// fatfs re-exports Read/Write/Seek/SeekFrom at the crate root (not via the
-// private `io` submodule).  IoBase (0.4+) is also at the crate root.
+//! FAT12/16/32 filesystem driver (via `rust-fatfs`, `no_std` + `alloc`).
+//!
+//! Provides a [`BlockIo`] adapter that wraps a [`block::BlockDevice`] into
+//! the byte-level `Read`/`Write`/`Seek` interface required by `fatfs`.
+//!
+//! A single global [`FileSystem`] handle is protected by a [`spin::Mutex`]
+//! under the [`MountedFs`] enum.  Mount with [`mount_virtio`] or
+//! [`mount_ramdisk`]; then use the `fat_*` functions for all I/O.
+//!
+//! All `fatfs` re-exports (`Read`, `Write`, `Seek`, `SeekFrom`, `IoBase`)
+//! are taken from the crate root as per the `fatfs 0.4+` API.
 
 use alloc::vec::Vec;
 use alloc::string::String;
@@ -21,9 +25,12 @@ use fatfs::{FileSystem, FsOptions};
 
 // ── BlockIo adapter ──────────────────────────────────────────────────────────
 
-/// Wraps a `BlockDevice` to provide byte-level Read/Write/Seek for fatfs.
-/// One-block write-back cache: dirty blocks are flushed before the cursor moves
-/// to a different block, and on explicit `flush()`.
+/// Byte-level I/O adapter over a [`block::BlockDevice`] for use with `fatfs`.
+///
+/// Implements a one-block write-back cache: the current block is held in
+/// `buf`; a dirty flag tracks whether it needs to be flushed.  The cache is
+/// written back before the cursor crosses a block boundary and on an explicit
+/// [`fatfs::Write::flush`] call.
 pub struct BlockIo<D: BlockDevice> {
     dev:       D,
     pos:       u64,
@@ -162,6 +169,10 @@ static FS: Mutex<Option<MountedFs>> = Mutex::new(None);
 
 // ── Mount helpers ─────────────────────────────────────────────────────────────
 
+/// Mount a FAT volume from a virtio-blk device.
+///
+/// Returns `true` on success; `false` if the device does not contain a
+/// recognisable FAT volume.
 pub fn mount_virtio(blk: VirtioBlk) -> bool {
     match FileSystem::new(BlockIo::new(blk), FsOptions::new()) {
         Ok(fs) => { *FS.lock() = Some(MountedFs::Virtio(fs)); true }
@@ -169,6 +180,10 @@ pub fn mount_virtio(blk: VirtioBlk) -> bool {
     }
 }
 
+/// Mount a FAT volume from an in-memory image.
+///
+/// Copies `img` into the 2 MiB [`RAM_FAT_SIZE`] static buffer, then opens
+/// a FAT filesystem over it.  Returns `true` on success.
 pub fn mount_ramdisk(img: &[u8]) -> bool {
     let copy_len = img.len().min(RAM_FAT_SIZE);
     unsafe {
@@ -183,6 +198,10 @@ pub fn mount_ramdisk(img: &[u8]) -> bool {
 
 // ── FAT operations ───────────────────────────────────────────────────────────
 
+/// List all files in the root directory.
+///
+/// Calls `cb(name, size_bytes)` for each file entry (directories are skipped).
+/// Does nothing if no filesystem is mounted.
 pub fn fat_list<F: FnMut(&str, u32)>(mut cb: F) {
     let mut guard = FS.lock();
     match guard.as_mut() {
@@ -205,6 +224,9 @@ where IO: IoBase<Error=()> + FatRead + FatWrite + FatSeek
     }
 }
 
+/// Read a file from the root directory into a freshly allocated `Vec<u8>`.
+///
+/// Returns `None` if the file is not found or the filesystem is not mounted.
 pub fn fat_read_file(name: &str) -> Option<Vec<u8>> {
     let mut guard = FS.lock();
     match guard.as_mut() {
@@ -238,6 +260,11 @@ where IO: IoBase<Error=()> + FatRead + FatWrite + FatSeek
     Some(buf)
 }
 
+/// Write (or overwrite) a file in the root directory.
+///
+/// Creates the file if it does not exist; truncates it before writing if it
+/// does.  Returns `true` on success, `false` on any I/O error or if no
+/// filesystem is mounted.
 pub fn fat_write_file(name: &str, data: &[u8]) -> bool {
     let mut guard = FS.lock();
     match guard.as_mut() {
@@ -266,6 +293,9 @@ where IO: IoBase<Error=()> + FatRead + FatWrite + FatSeek
     file.flush().is_ok()
 }
 
+/// Remove a file from the root directory.
+///
+/// Returns `true` if the file was found and removed, `false` otherwise.
 pub fn fat_remove_file(name: &str) -> bool {
     let mut guard = FS.lock();
     match guard.as_mut() {
@@ -288,7 +318,9 @@ fn split_path(path: &str) -> (&str, &str) {
 
 // ── Disk statistics ──────────────────────────────────────────────────────────
 
-/// Returns `(total_bytes, free_bytes)` from FAT metadata, or `None` if unmounted.
+/// Return `(total_bytes, free_bytes)` from FAT volume metadata.
+///
+/// Returns `None` if no filesystem is mounted or the stats call fails.
 pub fn fat_disk_stats() -> Option<(u64, u64)> {
     let mut guard = FS.lock();
     match guard.as_mut() {
@@ -308,8 +340,10 @@ where IO: IoBase<Error=()> + FatRead + FatWrite + FatSeek
 
 // ── Directory helpers ────────────────────────────────────────────────────────
 
-/// Returns `true` if `path` (leading `/` stripped) refers to a directory.
-/// The empty string or `"/"` always returns `true` (root).
+/// Return `true` if `path` refers to a directory in the FAT volume.
+///
+/// Leading `/` is stripped before lookup.  The empty string and `"/"` always
+/// return `true` (root directory).
 pub fn fat_is_dir(path: &str) -> bool {
     let name = path.trim_start_matches('/');
     if name.is_empty() { return true; }
@@ -322,6 +356,8 @@ pub fn fat_is_dir(path: &str) -> bool {
 }
 
 /// Create a directory with `name` inside the root directory.
+///
+/// Leading `/` is stripped.  Returns `true` on success.
 pub fn fat_mkdir(name: &str) -> bool {
     let name = name.trim_start_matches('/');
     if name.is_empty() { return false; }
@@ -335,8 +371,11 @@ pub fn fat_mkdir(name: &str) -> bool {
 
 // ── Path-aware listing ───────────────────────────────────────────────────────
 
-/// List entries in the directory at `path` (leading `/` stripped internally).
-/// Callback receives `(name, size_bytes, is_dir)`. Skips `.` and `..`.
+/// List entries in the directory at `path`.
+///
+/// Leading `/` is stripped internally.  Calls `cb(name, size_bytes, is_dir)`
+/// for each entry, skipping `.` and `..`.  If `path` is empty or `"/"`, lists
+/// the root directory.
 pub fn fat_list_path<F: FnMut(&str, u32, bool)>(path: &str, mut cb: F) {
     let mut guard = FS.lock();
     match guard.as_mut() {
@@ -376,8 +415,10 @@ where IO: IoBase<Error=()> + FatRead + FatWrite + FatSeek
 
 // ── Path-aware file read ─────────────────────────────────────────────────────
 
-/// Read a file at `path` (e.g. `"file.txt"` or `"subdir/file.txt"`).
-/// Leading `/` is stripped. Returns `None` if not found or FS unmounted.
+/// Read a file at a path (e.g. `"file.txt"` or `"subdir/file.txt"`).
+///
+/// Leading `/` is stripped.  Returns `None` if not found or the filesystem is
+/// not mounted.
 pub fn fat_read_path(path: &str) -> Option<Vec<u8>> {
     let mut guard = FS.lock();
     match guard.as_mut() {

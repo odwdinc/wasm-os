@@ -1,6 +1,21 @@
-//! WASM interpreter — Sprint A
+//! WASM stack-machine interpreter.
 //!
-//! No heap allocation; everything lives in fixed-size arrays.
+//! All state lives in fixed-size arrays — no heap allocation, no `alloc`.
+//! The [`Interpreter`] struct (~70 KiB) is stack-allocated inside
+//! [`engine::spawn`](crate::wasm::engine::spawn) and borrowed for the
+//! lifetime of the pool slot.
+//!
+//! # Execution model
+//!
+//! - Values are stored as `i64`; `i32` results are sign-extended so that
+//!   both types coexist on the same [`STACK_DEPTH`]-deep value stack.
+//! - Host imports are resolved at instantiation time and stored as raw
+//!   function pointers in `host_fns`, so there is no name-lookup overhead
+//!   at call sites.
+//! - Cooperative yielding is implemented by returning
+//!   [`InterpError::Yielded`] from a host function; the call stack is
+//!   left intact so [`Interpreter::resume`] can continue exactly where
+//!   execution paused.
 
 use super::loader::{Module, read_u32_leb128};
 
@@ -121,54 +136,97 @@ const OP_I64_EXTEND16_S: u8 = 0xC3;
 const OP_I64_EXTEND32_S: u8 = 0xC4;
 
 // ── Capacity limits ───────────────────────────────────────────────────────────
+
+/// Maximum number of functions (imports + defined) in a module.
 pub const MAX_FUNCS:      usize = 512;
+/// Maximum number of type-section entries (function signatures).
 pub const MAX_TYPES:      usize = 128;
+/// Maximum locals per function frame (parameters + declared locals).
 pub const MAX_LOCALS:     usize = 32;
+/// Maximum number of global variables.
 pub const MAX_GLOBALS:    usize = 64;
+/// Maximum number of function-table entries (for `call_indirect`).
 pub const MAX_TABLE:      usize = 512;
 
 const NULL_FUNC: u32 = u32::MAX; // sentinel for an uninitialised table entry
-pub const MAX_CTRL_DEPTH: usize = 64; // total across all live call frames
+
+/// Maximum total block/loop/if nesting depth across all live call frames.
+pub const MAX_CTRL_DEPTH: usize = 64;
+/// Depth of the value stack (`i64` entries).
 pub const STACK_DEPTH:    usize = 256;
+/// Maximum call-stack depth (number of simultaneously live call frames).
 pub const CALL_DEPTH:     usize = 128;
 const PAGE_SIZE: usize = 65536;
 
 const NO_ELSE: usize = usize::MAX;
 
-/// A single resolved host function.  Called when executing `call N` where
-/// `N < import_count`.  Each import is pre-resolved at instantiation time so
-/// there is no dispatch overhead at runtime.
+/// Signature for a kernel host function callable from WASM.
+///
+/// - `vstack` — the interpreter's value stack (`i64` entries).
+/// - `vsp`    — stack pointer (index of the next free slot).
+/// - `mem`    — the module's linear memory for the current pool slot.
+///
+/// A host function pops its arguments from the top of `vstack` (decrementing
+/// `vsp`) and, if it returns a value, pushes it back (incrementing `vsp`).
+///
+/// Return `Err(InterpError::Yielded)` to suspend the task cooperatively.
 pub type HostFn = fn(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8])
     -> Result<(), InterpError>;
 
 // ── Error type ────────────────────────────────────────────────────────────────
+
+/// Errors (and pseudo-errors) that can arise during WASM interpretation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InterpError {
+    /// The module has no code section.
     NoCodeSection,
+    /// Bytecode structure is invalid (unexpected byte, truncated encoding, etc.).
     MalformedCode,
+    /// More functions than [`MAX_FUNCS`].
     TooManyFuncs,
+    /// More type entries than [`MAX_TYPES`].
     TooManyTypes,
+    /// A function requires more locals than [`MAX_LOCALS`].
     TooManyLocals,
+    /// More globals than [`MAX_GLOBALS`].
     TooManyGlobals,
+    /// Block/loop/if nesting exceeded [`MAX_CTRL_DEPTH`].
     CtrlStackOverflow,
+    /// `call` or `call_indirect` target is out of the function index range.
     FuncIndexOutOfRange,
+    /// `local.get` / `local.set` / `local.tee` index out of range.
     LocalIndexOutOfRange,
+    /// `global.get` / `global.set` index out of range.
     GlobalIndexOutOfRange,
+    /// `global.set` on a `const` (immutable) global.
     GlobalImmutable,
+    /// `call_indirect` on a null (uninitialised) table entry.
     IndirectCallNull,
+    /// `call_indirect` type signature mismatch.
     IndirectCallTypeMismatch,
+    /// `call` to an import index that was not resolved at instantiation.
     ImportNotFound,
+    /// The `unreachable` opcode was executed.
     Unreachable,
+    /// Value stack depth exceeded [`STACK_DEPTH`].
     StackOverflow,
+    /// Value stack underflowed (pop on an empty stack).
     StackUnderflow,
+    /// Call depth exceeded [`CALL_DEPTH`].
     CallStackOverflow,
+    /// Linear memory access outside the allocated page range.
     MemOutOfBounds,
+    /// Integer division or remainder by zero.
     DivisionByZero,
+    /// A float-to-integer conversion was out of range or produced NaN.
     InvalidConversion,
+    /// An opcode with the given byte value is not implemented.
     UnknownOpcode(u8),
-    /// Not a real error — used to suspend a task cooperatively.
+    /// Not a real error — the module called `env.yield` or `env.sleep_ms`.
+    /// The interpreter's state is intact; call [`Interpreter::resume`] to continue.
     Yielded,
-    /// Not a real error — module called `exit`; treated as clean completion.
+    /// Not a real error — the module called `env.exit`.
+    /// Treated as clean completion by the engine.
     Exited,
 }
 
@@ -245,6 +303,19 @@ const BLANK_FRAME: Frame = Frame {
 // ── Default host ──────────────────────────────────────────────────────────────
 
 // ── Interpreter ───────────────────────────────────────────────────────────────
+
+/// WASM stack-machine interpreter.
+///
+/// The struct is large (~70 KiB) and is normally stack-allocated inside
+/// [`engine::spawn`](crate::wasm::engine::spawn).  It borrows the module's
+/// body slices and the pool slot's linear memory for lifetime `'a`.
+///
+/// # Execution
+///
+/// - [`Interpreter::call`] — push a call frame for a defined function and run.
+/// - [`Interpreter::resume`] — re-enter the dispatch loop after a yield.
+/// - [`Interpreter::reset_for_call`] — clear stack/frame state between
+///   invocations on the same instance (memory and globals are preserved).
 pub struct Interpreter<'a> {
     bodies:             [&'a [u8]; MAX_FUNCS],
     body_count:         usize,
@@ -288,6 +359,18 @@ pub struct Interpreter<'a> {
 }
 
 impl<'a> Interpreter<'a> {
+    /// Construct an `Interpreter` from a parsed module.
+    ///
+    /// Parses the type, function, code, global, and element sections into
+    /// the fixed-size internal tables.  `import_count` is the number of
+    /// function imports (determines the import/defined split for `call`).
+    /// `host_fns[i]` must be `Some` for every import index `i < import_count`.
+    /// `initial_pages` sets [`Interpreter::current_pages`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InterpError`] if any section exceeds the corresponding
+    /// capacity limit or is structurally malformed.
     pub fn new(module: &Module<'a>, import_count: usize, mem: &'a mut [u8], host_fns: [Option<HostFn>; MAX_FUNCS], initial_pages: u32) -> Result<Self, InterpError> {
         let mut type_param_counts  = [0usize; MAX_TYPES];
         let mut type_result_counts = [0usize; MAX_TYPES];
@@ -353,6 +436,15 @@ impl<'a> Interpreter<'a> {
         self.current_pages as usize * PAGE_SIZE
     }
 
+    /// Call the defined function at absolute index `func_idx`.
+    ///
+    /// Pushes a new call frame and runs the dispatch loop until the function
+    /// returns, the interpreter yields, or a trap occurs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InterpError::ImportNotFound`] if `func_idx` is in the import
+    /// range, or [`InterpError::FuncIndexOutOfRange`] if it is out of bounds.
     pub fn call(&mut self, func_idx: usize) -> Result<(), InterpError> {
         if func_idx < self.import_count { return Err(InterpError::ImportNotFound); }
         let body_idx = func_idx - self.import_count;
@@ -361,15 +453,19 @@ impl<'a> Interpreter<'a> {
         self.run()
     }
 
-    /// Re-enter the dispatch loop without resetting state.
-    /// Use after the interpreter returned `Yielded` to continue where it left off.
+    /// Re-enter the dispatch loop after a [`InterpError::Yielded`] suspension.
+    ///
+    /// All frame, value-stack, and control-stack state is preserved between
+    /// yield and resume.  Do **not** call this after a normal return or trap.
     pub fn resume(&mut self) -> Result<(), InterpError> {
         self.run()
     }
 
-    /// Reset only the execution state (stack, call frames, control stack).
-    /// Memory and globals are preserved — call this between invocations on the
-    /// same instance rather than creating a new Interpreter from scratch.
+    /// Reset execution state (value stack, call frames, control stack) while
+    /// preserving linear memory and globals.
+    ///
+    /// Use between successive calls on the same instance rather than
+    /// constructing a new `Interpreter` each time.
     pub fn reset_for_call(&mut self) {
         self.vsp             = 0;
         self.fdepth          = 0;
@@ -382,6 +478,8 @@ impl<'a> Interpreter<'a> {
         if self.vsp > 0 { Some(self.vstack[self.vsp - 1] as i32) } else { None }
     }
 
+    /// Return the top-of-stack value (`i64`) without popping, or `None` if
+    /// the stack is empty.  Used by the engine to read function return values.
     pub fn top(&self) -> Option<i64> {
         if self.vsp > 0 { Some(self.vstack[self.vsp - 1]) } else { None }
     }
@@ -421,6 +519,9 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
+    /// Pop the top value from the value stack.
+    ///
+    /// Returns [`InterpError::StackUnderflow`] if the stack is empty.
     pub fn v_pop(&mut self) -> Result<i64, InterpError> {
         if self.vsp == 0 { return Err(InterpError::StackUnderflow); }
         self.vsp -= 1;
@@ -1709,6 +1810,11 @@ fn parse_global_section(
 
 // ── Signed LEB-128 ────────────────────────────────────────────────────────────
 
+/// Decode a signed 64-bit LEB-128 integer from the front of `bytes`.
+///
+/// Returns `Some((value, bytes_consumed))` on success, or `None` if the
+/// encoding is truncated or would overflow an `i64`.
+/// Used for `i64.const` immediates and global initializers.
 pub fn read_i64_leb128(bytes: &[u8]) -> Option<(i64, usize)> {
     let mut result: i64 = 0;
     let mut shift: u32  = 0;
@@ -1726,6 +1832,11 @@ pub fn read_i64_leb128(bytes: &[u8]) -> Option<(i64, usize)> {
     None
 }
 
+/// Decode a signed 32-bit LEB-128 integer from the front of `bytes`.
+///
+/// Returns `Some((value, bytes_consumed))` on success, or `None` if the
+/// encoding is truncated or would overflow an `i32`.
+/// Used for `i32.const` immediates and data-segment offsets.
 pub fn read_i32_leb128(bytes: &[u8]) -> Option<(i32, usize)> {
     let mut result: i32 = 0;
     let mut shift: u32  = 0;

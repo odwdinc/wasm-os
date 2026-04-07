@@ -1,10 +1,12 @@
-//! Sprint C.2 — Task / Fiber Abstraction
+//! Cooperative task abstraction over the WASM engine instance pool.
 //!
-//! A Task owns an engine pool slot and tracks execution state for the
-//! cooperative scheduler (Sprint C.3).  The interpreter's own fields
-//! (frame stack, value stack, PC) serve as the saved execution state;
-//! no separate snapshot is needed because the interpreter is not reset
-//! between yield/resume cycles.
+//! Each [`Task`] owns one [`engine`](crate::wasm::engine) pool slot and
+//! carries a [`TaskState`] that drives the round-robin scheduler in
+//! [`crate::scheduler`].
+//!
+//! The interpreter's own stacks (value, call, control) are the saved
+//! execution state — no separate snapshot is needed because the
+//! interpreter is never reset between yield/resume cycles.
 
 use super::engine::{self, RunError, TaskResult, MAX_INSTANCES};
 
@@ -15,17 +17,19 @@ const MAX_NAME: usize = 32;
 
 // ── Task state ────────────────────────────────────────────────────────────────
 
+/// Execution state of a WASM task.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
-    /// Spawned but the entry function has not been called yet.
+    /// Spawned; the entry function (`main`) has not been called yet.
     Ready,
-    /// Currently executing (on CPU, or selected by scheduler).
+    /// Selected by the scheduler and currently executing.
     Running,
-    /// Called `host_yield`; waiting for the scheduler to resume it.
+    /// Called `env.yield`; waiting for the scheduler to call [`task_step`] again.
     Suspended,
-    /// Called `sleep_ms`; will resume once the tick counter reaches the stored wake tick.
+    /// Called `env.sleep_ms`; will become [`TaskState::Suspended`] once
+    /// [`crate::drivers::pit::ticks`] reaches the stored wake tick.
     Sleeping(u64),
-    /// Ran to completion or was killed.
+    /// Ran to completion or was killed via [`task_kill`].
     #[allow(dead_code)]
     Done,
 }
@@ -48,7 +52,15 @@ static mut TASK_QUEUE: [Option<Task>; MAX_TASKS] = [BLANK; MAX_TASKS];
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Instantiate `bytes` and register it as a new task.  Returns the task ID.
+/// Instantiate `bytes` as a new task and return its task ID.
+///
+/// Calls [`engine::spawn`](crate::wasm::engine::spawn) to obtain a pool slot,
+/// then registers the slot in the static task queue.
+///
+/// # Errors
+///
+/// Propagates [`RunError`](crate::wasm::engine::RunError) from the engine
+/// (e.g. `PoolFull`, `ImportNotFound`, parse errors).
 pub fn task_spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     let slot = unsafe {
         (*core::ptr::addr_of!(TASK_QUEUE)).iter().position(|t| t.is_none()).ok_or(RunError::PoolFull)?
@@ -72,7 +84,9 @@ pub fn task_spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     Ok(slot)
 }
 
-/// Mark the task as Done and free its instance pool slot.
+/// Kill a task: remove it from the queue and free its engine pool slot.
+///
+/// No-op if `id >= MAX_TASKS` or the slot is already empty.
 pub fn task_kill(id: usize) {
     if id >= MAX_TASKS { return; }
     unsafe {
@@ -82,16 +96,29 @@ pub fn task_kill(id: usize) {
     }
 }
 
-/// Return the current state of a task, or `None` if the slot is empty.
+/// Return the [`TaskState`] of task `id`, or `None` if the slot is empty.
 #[allow(dead_code)]
 pub fn task_state(id: usize) -> Option<TaskState> {
     if id >= MAX_TASKS { return None; }
     unsafe { TASK_QUEUE[id].as_ref().map(|t| t.state) }
 }
 
-/// Step one task: start it (if Ready) or resume it (if Ready/Suspended/awake Sleeping).
-/// Updates the task's state and returns what the task did.
-/// Returns `None` if the slot is empty or the task is not yet runnable.
+/// Advance task `id` by one step.
+///
+/// - If the task is [`TaskState::Ready`], calls
+///   [`engine::start_task`](crate::wasm::engine::start_task) with entry
+///   `"main"`.
+/// - If the task is [`TaskState::Suspended`] (or a [`TaskState::Sleeping`]
+///   task whose wake tick has elapsed), calls
+///   [`engine::resume_task`](crate::wasm::engine::resume_task).
+///
+/// Updates [`TaskState`] based on the outcome:
+/// - `Completed` → removes the task and destroys the pool slot.
+/// - `Yielded` with pending sleep → transitions to `Sleeping(wake_tick)`.
+/// - `Yielded` without sleep → transitions to `Suspended`.
+/// - Error → removes the task and destroys the pool slot.
+///
+/// Returns `None` if the slot is empty or the task is not currently runnable.
 pub fn task_step(id: usize) -> Option<Result<TaskResult, RunError>> {
     if id >= MAX_TASKS { return None; }
 
@@ -155,7 +182,9 @@ pub fn task_step(id: usize) -> Option<Result<TaskResult, RunError>> {
     Some(result)
 }
 
-/// True if task `id` exists and is ready to run right now.
+/// Return `true` if task `id` exists and can be stepped right now.
+///
+/// A `Sleeping` task becomes runnable once its wake tick is reached.
 pub fn is_task_runnable(id: usize) -> bool {
     if id >= MAX_TASKS { return false; }
     unsafe {
@@ -167,7 +196,9 @@ pub fn is_task_runnable(id: usize) -> bool {
     }
 }
 
-/// Call `f(id, name, state)` for every non-empty slot.
+/// Call `f(id, name, state)` for every non-empty task slot.
+///
+/// Used by the `tasks` shell command.
 pub fn for_each_task<F: FnMut(usize, &str, TaskState)>(mut f: F) {
     unsafe {
         for (i, slot) in (*core::ptr::addr_of!(TASK_QUEUE)).iter().enumerate() {

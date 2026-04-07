@@ -1,7 +1,7 @@
 //! Non-blocking keyboard/serial input and shell line editor.
 //!
-//! `poll_once` is called by the scheduler on every round so the shell
-//! participates in round-robin alongside WASM tasks.
+//! [`poll_once`] is called by the scheduler on every round so the shell
+//! participates in the round-robin loop alongside WASM tasks without blocking.
 
 use crate::drivers::keyboard::{try_next_key, Key};
 
@@ -9,6 +9,7 @@ const MAX_LINE: usize = 256;
 
 // ── Shell state ───────────────────────────────────────────────────────────────
 
+/// Persistent state for the non-blocking shell line editor.
 pub struct ShellState {
     buf:            [u8; MAX_LINE],
     len:            usize,
@@ -16,6 +17,8 @@ pub struct ShellState {
 }
 
 impl ShellState {
+    /// Create a new [`ShellState`] with an empty line buffer and the prompt
+    /// flagged as pending (so it is printed on the first `poll_once` call).
     pub fn new() -> Self {
         Self { buf: [0u8; MAX_LINE], len: 0, prompt_pending: true }
     }
@@ -78,8 +81,12 @@ pub fn poll_once(state: &mut ShellState) -> bool {
     true
 }
 
-/// Reads a line into `buf` (max buf.len()), returns Some(&str) on Enter, None if interrupted.
-/// Supports Backspace (ASCII 0x08 or 0x7f)
+/// Blocking line-read for use by WASM host functions (not the scheduler loop).
+///
+/// Spins polling keyboard and serial until Enter is pressed.  Characters are
+/// echoed and backspace is supported.  Returns `Some(&str)` on Enter, or
+/// `None` if the buffer content is not valid UTF-8 (should not happen in
+/// normal use with ASCII input).
 pub fn read_line(buf: &mut [u8]) -> Option<&str> {
     let mut len = 0;
 

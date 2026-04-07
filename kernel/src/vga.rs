@@ -1,3 +1,15 @@
+//! Framebuffer text renderer and direct pixel access.
+//!
+//! Writes characters to the linear framebuffer provided by the bootloader
+//! using an 8×8 pixel bitmap font for printable ASCII (32–126).
+//!
+//! The global [`WRITER`] is a [`spin::Mutex`]-protected [`VgaBuffer`] that
+//! is initialised once by [`init`].  All output is also mirrored to the
+//! serial port via the `print!` / `println!` macros in `main.rs`.
+//!
+//! [`set_pixel`] bypasses the text cursor and writes a single pixel directly
+//! to the framebuffer; it handles BGR/RGB conversion automatically.
+
 use bootloader_api::info::{FrameBufferInfo, PixelFormat};
 use spin::Mutex;
 
@@ -109,6 +121,7 @@ static FONT: [[u8; 8]; 95] = [
 // Writer
 // ---------------------------------------------------------------------------
 
+/// Direct-write framebuffer text renderer with cursor tracking and scrolling.
 pub struct VgaBuffer {
     buf: *mut u8,
     buf_len: usize,
@@ -122,6 +135,7 @@ pub struct VgaBuffer {
 unsafe impl Send for VgaBuffer {}
 
 impl VgaBuffer {
+    /// Create a new `VgaBuffer` from the raw framebuffer slice and its metadata.
     pub fn new(buf: &mut [u8], info: FrameBufferInfo) -> Self {
         VgaBuffer {
             buf: buf.as_mut_ptr(),
@@ -189,6 +203,13 @@ impl VgaBuffer {
         }
     }
 
+    /// Write a single character, advancing the cursor.
+    ///
+    /// - `'\n'` moves to the start of the next row.
+    /// - `'\x08'` (backspace) erases the previous character and moves the cursor back.
+    /// - All other printable ASCII characters are rendered using the 8×8 font.
+    ///
+    /// Scrolls up by one row when the cursor passes the last row.
     pub fn write_char(&mut self, c: char) {
         if c == '\n' {
             self.col = 0;
@@ -241,6 +262,7 @@ impl VgaBuffer {
         }
     }
 
+    /// Zero the entire framebuffer and reset the cursor to (0, 0).
     pub fn clear_screen(&mut self) {
         // SAFETY: buf and buf_len describe the full framebuffer allocation.
         unsafe {
@@ -284,6 +306,21 @@ pub fn init(buf: &mut [u8], info: FrameBufferInfo) {
 pub fn clear_screen() {
     if let Some(w) = WRITER.lock().as_mut() {
         w.clear_screen();
+    }
+}
+
+/// Write one pixel directly to the framebuffer, bypassing the text cursor.
+///
+/// `x` and `y` are pixel coordinates from the top-left corner.  Out-of-bounds
+/// coordinates are silently ignored.  `rgb` is packed as `0x00RRGGBB`; the
+/// function converts to the actual framebuffer pixel format automatically.
+pub fn set_pixel(x: i32, y: i32, rgb: u32) {
+    if x < 0 || y < 0 { return; }
+    let r = ((rgb >> 16) & 0xFF) as u8;
+    let g = ((rgb >>  8) & 0xFF) as u8;
+    let b = ( rgb        & 0xFF) as u8;
+    if let Some(w) = WRITER.lock().as_mut() {
+        w.put_pixel(x as usize, y as usize, r, g, b);
     }
 }
 

@@ -1,22 +1,21 @@
-// memory/mod.rs — memory subsystem (allocator + virtual→physical translation)
+//! Memory subsystem: heap allocator and virtual→physical address translation.
+//!
+//! The bootloader maps all physical memory at a dynamic virtual offset
+//! (`BOOTLOADER_CONFIG.mappings.physical_memory = Dynamic`).  [`init`] stores
+//! that offset so that [`virt_to_phys`] can walk the 4-level x86-64 page
+//! tables to find the physical address of any mapped virtual address.
+//!
+//! This page-table walk is necessary because BSS pages are allocated from the
+//! bootloader's own frame pool — they are **not** located at a fixed offset
+//! from the kernel's virtual base address — so a simple formula cannot be used.
 
 pub mod allocator;
 
-// memory/mod.rs — virtual→physical address translation via page-table walk
-//
-// The bootloader maps all physical memory starting at `phys_mem_offset`
-// (configured via BOOTLOADER_CONFIG.mappings.physical_memory = Dynamic).
-//
-// To translate a kernel virtual address to its physical address we walk the
-// 4-level x86-64 page tables.  This is necessary because BSS pages are
-// allocated by the bootloader from its own frame pool and are NOT placed at
-// `kernel_phys_base + (virt - kernel_virt_base)` — only file-backed segment
-// pages follow that formula.
-
 static mut PHYS_MEM_OFFSET: u64 = 0;
 
-/// Store the physical-memory window base from BootInfo.
-/// Must be called once at boot (before any `virt_to_phys` call).
+/// Store the physical-memory window base address from `BootInfo`.
+///
+/// Must be called exactly once at boot, before any call to [`virt_to_phys`].
 pub fn init(phys_mem_offset: u64) {
     unsafe { PHYS_MEM_OFFSET = phys_mem_offset; }
 }
@@ -28,11 +27,16 @@ fn read_phys_u64(phys: u64) -> u64 {
     unsafe { core::ptr::read_volatile(virt as *const u64) }
 }
 
-/// Translate a kernel virtual address to its physical address by walking the
-/// hardware page tables.
+/// Translate a kernel virtual address to its physical address.
 ///
-/// Supports 4 KiB, 2 MiB, and 1 GiB pages.
-/// Panics (loops forever on bare metal) if the address is not mapped.
+/// Walks the 4-level x86-64 page tables (PML4 → PDPT → PD → PT) via the
+/// physical-memory window established by [`init`].  Supports 4 KiB, 2 MiB,
+/// and 1 GiB pages.
+///
+/// # Panics / infinite loop
+///
+/// Loops forever if the address is not mapped (bare-metal equivalent of a
+/// page-fault panic).
 pub fn virt_to_phys(virt: usize) -> u64 {
     let v = virt as u64;
 

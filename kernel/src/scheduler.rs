@@ -1,21 +1,28 @@
-//! Sprint C.3 / C.5 — Round-Robin Cooperative Scheduler
+//! Round-robin cooperative scheduler.
 //!
-//! `run()` is the kernel's main loop (called instead of `keyboard::run_loop`).
-//! Each iteration it:
-//!   1. Calls `keyboard::poll_once` — handles one key event if available.
-//!   2. Runs one step of the next runnable WASM task (round-robin).
-//!   3. If both were idle, executes `hlt` to sleep until the next PIT interrupt
-//!      (~10 ms at 100 Hz) rather than busy-spinning.
+//! [`run`] is the kernel's main loop, entered once at boot and never returning.
+//! Each iteration:
 //!
-//! This means the shell and all WASM tasks share the CPU cooperatively:
-//! the shell gets a turn on every iteration, and WASM tasks each get a turn
-//! before cycling back to the shell.
+//! 1. Calls [`shell::input::poll_once`](crate::shell::input::poll_once) to
+//!    handle one keyboard/serial key event (if any).
+//! 2. Steps the next runnable WASM task via
+//!    [`task::task_step`](crate::wasm::task::task_step) (round-robin).
+//! 3. If both the shell and all tasks were idle, executes `hlt` to sleep
+//!    until the next PIT interrupt (~10 ms at 100 Hz).
+//!
+//! The shell and all WASM tasks cooperate: the shell gets a turn every
+//! loop iteration; tasks each get one step before the cursor advances to the
+//! next slot.
 
 use crate::wasm::task::{self, MAX_TASKS};
 use crate::wasm::engine::TaskResult;
 
 static mut CURSOR: usize = 0;
 
+/// Start the cooperative scheduler loop.  Never returns (`-> !`).
+///
+/// Creates a [`ShellState`](crate::shell::input::ShellState) and then loops
+/// forever, alternating between the shell and runnable WASM tasks.
 pub fn run() -> ! {
     let mut shell = crate::shell::input::ShellState::new();
 

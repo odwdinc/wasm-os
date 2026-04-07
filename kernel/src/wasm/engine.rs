@@ -1,13 +1,26 @@
-//! Execution engine — Sprint B.4: Host Function Registry
+//! WASM execution engine — instance pool, host-function registry, and
+//! task execution helpers.
 //!
-//! Public API:
-//!   `register_host(module, name, fn)` — register a named host function at boot
-//!   `init_host_fns()`                 — register the kernel's built-in host functions
-//!   `spawn(name, bytes)`              — instantiate into a pool slot, return handle
-//!   `call_handle(handle, entry, args)`— execute an exported function
-//!   `destroy(handle)`                 — free the pool slot, zero its memory
-//!   `for_each_instance(f)`            — iterate active slots (for `ps`)
-//!   `run(bytes, entry, args)`         — convenience: spawn + call + destroy
+//! # Host-function registry
+//!
+//! Up to [`MAX_HOST_FUNCS`] host functions can be registered before any
+//! module is spawned.  Call [`init_host_fns`] once at boot to register the
+//! kernel built-ins, then optionally call [`register_host`] for any
+//! application-specific imports.
+//!
+//! # Instance pool
+//!
+//! Up to [`MAX_INSTANCES`] modules can be live simultaneously.  Each slot
+//! owns a dedicated [`MAX_MEM_PAGES`] × 64 KiB static memory region in
+//! `SLOT_MEM`.  Use [`spawn`] / [`destroy`] to manage lifetimes, or the
+//! convenience wrapper [`run`] for fire-and-forget execution.
+//!
+//! # Task execution
+//!
+//! [`start_task`] and [`resume_task`] integrate with the cooperative
+//! scheduler: a module that calls `host_yield` or `sleep_ms` returns
+//! [`TaskResult::Yielded`] rather than completing, and execution resumes
+//! from the same point on the next call to [`resume_task`].
 
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -106,12 +119,20 @@ fn lookup_host(module: &str, name: &str) -> Option<HostFn> {
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
+/// Errors that can be returned by [`spawn`], [`start_task`], [`resume_task`],
+/// or the convenience wrapper [`run`].
 pub enum RunError {
+    /// The WASM binary could not be parsed (see [`LoadError`]).
     Load(LoadError),
+    /// A runtime trap occurred during execution (see [`InterpError`]).
     Interp(InterpError),
+    /// The named export was not found in the module.
     EntryNotFound,
+    /// The module requests more linear memory than [`MAX_MEM_PAGES`] pages.
     MemoryTooLarge,
+    /// All [`MAX_INSTANCES`] pool slots are occupied.
     PoolFull,
+    /// The module imports a function that is not in the host registry.
     ImportNotFound,
 }
 
@@ -412,6 +433,29 @@ fn host_fs_size(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(
     Ok(())
 }
 
+/// `fb_set_pixel(x: i32, y: i32, rgb: i32)` — write one pixel to the framebuffer.
+///
+/// `x` and `y` are pixel coordinates (top-left origin).  `rgb` is packed as
+/// `0x00RRGGBB`.  The kernel converts to the actual pixel format (BGR or RGB)
+/// automatically.  Out-of-bounds coordinates are silently ignored.
+fn host_fb_set_pixel(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 3 { return Err(InterpError::StackUnderflow); }
+    let rgb = vstack[*vsp - 1] as u32;
+    let y   = vstack[*vsp - 2] as i32;
+    let x   = vstack[*vsp - 3] as i32;
+    *vsp -= 3;
+    crate::vga::set_pixel(x, y, rgb);
+    Ok(())
+}
+
+/// `fb_present()` — present the framebuffer (no-op on this single-buffered display).
+///
+/// Provided as a hook for future double-buffering support.  Calling it now is
+/// safe but has no effect.
+fn host_fb_present(_vstack: &mut [i64], _vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    Ok(())
+}
+
 /// Register the kernel's built-in host functions.  Call once at boot before
 /// running any module.
 pub fn init_host_fns() {
@@ -434,7 +478,9 @@ pub fn init_host_fns() {
     register_host("env", "fs_read",    host_fs_read);
     register_host("env", "fs_write",   host_fs_write);
     register_host("env", "fs_size",    host_fs_size);
-    register_host("env", "args_get",   host_args_get);
+    register_host("env", "args_get",     host_args_get);
+    register_host("env", "fb_set_pixel", host_fb_set_pixel);
+    register_host("env", "fb_present",   host_fb_present);
 }
 
 /// Print an i32 as decimal followed by a newline, without heap allocation.
@@ -535,6 +581,10 @@ fn init_memory(data_section: &[u8], mem: &mut [u8]) -> bool {
 
 // ── Import counting ───────────────────────────────────────────────────────────
 
+/// Count the number of function imports in `import_section`.
+///
+/// Returns `0` if the section is `None` or malformed.  Used during
+/// [`spawn`] to determine the import/defined split in the function index space.
 pub fn count_func_imports(import_section: Option<&[u8]>) -> usize {
     let bytes = match import_section { Some(b) => b, None => return 0 };
     let mut cur = 0usize;
@@ -625,8 +675,23 @@ impl PoolSlot {
 const BLANK_SLOT: PoolSlot = PoolSlot::blank();
 static mut POOL: [PoolSlot; MAX_INSTANCES] = [BLANK_SLOT; MAX_INSTANCES];
 
-/// Instantiate `bytes` into the first free pool slot and return its handle.
-/// The module is wired up with the kernel host functions.
+/// Instantiate a WASM module into the first free pool slot.
+///
+/// Returns the pool slot index (the *handle*) on success.  The handle is
+/// used with [`start_task`], [`resume_task`], [`destroy`], and
+/// [`for_each_instance`].
+///
+/// # Steps performed
+///
+/// 1. Find a free slot; fail with [`RunError::PoolFull`] if none available.
+/// 2. Parse `bytes` with [`loader::load`].
+/// 3. Validate `min_pages <= MAX_MEM_PAGES`; fail with [`RunError::MemoryTooLarge`] otherwise.
+/// 4. Zero the slot's `SLOT_MEM` region.
+/// 5. Resolve all function imports against the host registry; fail with
+///    [`RunError::ImportNotFound`] if any import is unregistered.
+/// 6. Construct an [`Interpreter`](crate::wasm::interp::Interpreter) and
+///    apply the data section initializers to linear memory.
+/// 7. Mark the slot as active.
 pub fn spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     // Find a free slot.
     let slot = unsafe {
@@ -688,7 +753,9 @@ pub fn spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     Ok(slot)
 }
 
-/// Free the pool slot: drop the instance and zero its memory.
+/// Free a pool slot, drop the instance, and zero its linear memory.
+///
+/// No-op if `handle >= MAX_INSTANCES` or the slot is already inactive.
 pub fn destroy(handle: usize) {
     if handle >= MAX_INSTANCES { return; }
     unsafe {
@@ -701,6 +768,8 @@ pub fn destroy(handle: usize) {
 }
 
 /// Call `f(handle, name, mem_pages)` for each active pool slot.
+///
+/// Used by the `ps` shell command to display running instances.
 pub fn for_each_instance<F: FnMut(usize, &str, usize)>(mut f: F) {
     unsafe {
         for (i, s) in (*core::ptr::addr_of!(POOL)).iter().enumerate() {
@@ -714,16 +783,21 @@ pub fn for_each_instance<F: FnMut(usize, &str, usize)>(mut f: F) {
 
 // ── Task execution helpers ────────────────────────────────────────────────────
 
-/// Result of a task execution step.
+/// Outcome of a single execution step for a cooperative task.
 pub enum TaskResult {
-    /// Task ran to completion; holds the optional return value.
+    /// The entry function returned normally; holds the top-of-stack value
+    /// (the function's return value), if any.
     Completed(Option<i64>),
-    /// Task called `host_yield` and suspended; call `resume_task` to continue.
+    /// The module called `env.yield` or `env.sleep_ms` and surrendered the CPU.
+    /// Call [`resume_task`] to continue execution from the same point.
     Yielded,
 }
 
-/// Begin executing `entry` on an already-spawned instance.
-/// Returns `Yielded` if the task requested a cooperative yield before finishing.
+/// Begin executing the export named `entry` on an already-spawned instance.
+///
+/// Pushes `args` onto the value stack before calling.  Returns
+/// [`TaskResult::Yielded`] if the module calls `env.yield` or `env.sleep_ms`
+/// before returning; call [`resume_task`] to continue from where it stopped.
 pub fn start_task(handle: usize, entry: &str, args: &[i32]) -> Result<TaskResult, RunError> {
     if handle >= MAX_INSTANCES { return Err(RunError::EntryNotFound); }
     let inst = unsafe {
@@ -750,7 +824,10 @@ pub fn start_task(handle: usize, entry: &str, args: &[i32]) -> Result<TaskResult
     }
 }
 
-/// Continue a suspended task from where it yielded.
+/// Continue a suspended task from the exact point it yielded.
+///
+/// The interpreter's frame/value/control stacks are preserved between
+/// calls — no re-parsing or re-initialisation is needed.
 pub fn resume_task(handle: usize) -> Result<TaskResult, RunError> {
     if handle >= MAX_INSTANCES { return Err(RunError::EntryNotFound); }
     let inst = unsafe {
@@ -767,9 +844,13 @@ pub fn resume_task(handle: usize) -> Result<TaskResult, RunError> {
 
 // ── Convenience wrapper ───────────────────────────────────────────────────────
 
-/// Spawn an instance, call `entry`, destroy it, return the result.
-/// Modules that call `yield` or `sleep_ms` are run to completion synchronously
-/// (yields are treated as no-ops in this path).
+/// Convenience wrapper: spawn, execute `entry` to completion, then destroy.
+///
+/// Cooperative yields (`env.yield`, `env.sleep_ms`) are drained synchronously —
+/// the module is immediately resumed after each yield.  This is suitable for
+/// short synchronous invocations from the shell (`run` command); long-running
+/// or truly concurrent modules should use [`spawn`] + [`start_task`] +
+/// [`task`](crate::wasm::task) instead.
 pub fn run(bytes: &'static [u8], entry: &str, args: &[i32]) -> Result<Option<i64>, RunError> {
     let handle = spawn("", bytes)?;
     let mut result = start_task(handle, entry, args);

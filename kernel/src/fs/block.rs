@@ -1,18 +1,18 @@
-// fs/block.rs — Block device abstraction (Sprint D.1)
-//
-// Defines the BlockDevice trait and a Ramdisk implementation backed by a
-// static byte array (no heap, no_std).
-//
-// Block size: 512 bytes (standard sector size).
-// Ramdisk:    256 blocks = 128 KiB — enough to hold several small WASM modules.
+//! Block-device abstraction and in-process ramdisk.
+//!
+//! Defines the [`BlockDevice`] trait (512-byte sector read/write) and a
+//! static [`Ramdisk`] implementation backed by a fixed 128 KiB array.
 
+/// Sector size in bytes (standard 512-byte sectors).
 pub const BLOCK_SIZE: usize = 512;
-pub const RAMDISK_BLOCKS: usize = 256; // 128 KiB
+/// Number of blocks in the static [`Ramdisk`] (128 KiB total).
+pub const RAMDISK_BLOCKS: usize = 256;
 
 // ---------------------------------------------------------------------------
 // Trait
 // ---------------------------------------------------------------------------
 
+/// Trait for 512-byte sector storage devices.
 pub trait BlockDevice {
     /// Read one 512-byte block at logical block address `lba` into `buf`.
     /// Returns `Err(())` if `lba` is out of range.

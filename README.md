@@ -12,7 +12,7 @@
 - **VM-based isolation** — sandboxing via the WASM memory model
 - **Host functions** instead of syscalls
 - **Persistent FAT filesystem** — virtio-blk disk or embedded ramdisk fallback
-- **Preemptive scheduling** — timer-driven task queue with round-robin
+- **Cooperative scheduling** — round-robin task queue with PIT-driven sleep wakeup
 
 > What if the OS *was* a WebAssembly runtime?
 
@@ -20,7 +20,9 @@
 
 ## Current Status
 
-The system boots, accepts keyboard input, mounts a FAT filesystem (virtio-blk or embedded fallback), and executes real WASM modules. A preemptive scheduler runs WASM instances as tasks.
+Sprints 1–4 (MVP) and A–D (runtime completeness, isolation, scheduling, persistent FS) are complete.
+
+The system boots, accepts keyboard/serial input, mounts a FAT filesystem, executes real WASM modules, and runs multiple modules concurrently as cooperative tasks.
 
 ```
 Type 'help' for commands.
@@ -29,8 +31,6 @@ Type 'help' for commands.
   fib.wasm                  567 bytes
 > run fib.wasm 10
 55
-> run fib.wasm 20
-6765
 > info fib.wasm
 file:    fib.wasm
 funcs:   2 defined, 2 imported
@@ -41,7 +41,9 @@ FAT              32768        12     32756
 > task-run hello.wasm
 task 0 spawned: hello.wasm
 > tasks
-[0] hello.wasm  (done)
+[0] hello.wasm  (suspended)
+> ps
+[0] hello.wasm  pages=1
 ```
 
 ---
@@ -110,13 +112,14 @@ The kernel always tries to mount `disk.img` via virtio-blk first. If that fails 
 | `rm <name>` | Remove a file |
 | `write <name> <hex>` | Write raw bytes (hex-encoded) as a file |
 | `edit <name>` | Line-append editor (`:w` = save, `:q` = quit) |
+| `asm <name>` | Assemble a tiny instruction sequence into a WASM module |
 | `save` | Flush in-memory file table to the FAT volume |
-| `info [name]` | Show module info, or tick count if no name |
-| `run <name> [args...]` | Execute a `.wasm` module |
-| `ps` | List running WASM instances |
+| `info [name]` | Show module section info, or tick count if no name |
+| `run <name> [args...]` | Execute a `.wasm` module synchronously |
+| `ps` | List active WASM instance pool slots |
 | `task-run <name>` | Spawn a module as a background task |
 | `task-kill <id>` | Kill a task by ID |
-| `tasks` | List all tasks |
+| `tasks` | List all tasks with state |
 
 ---
 
@@ -160,6 +163,8 @@ Compile with `wat2wasm`, place under `userland/`, run `tools/wasm-pack.sh`.
 | `"env"."fs_read"` | `(param i32 i32 i32 i32) → i32` | Read file into memory (name_ptr, name_len, buf_ptr, buf_cap); returns byte count or -1 |
 | `"env"."fs_write"` | `(param i32 i32 i32 i32) → i32` | Write bytes from memory to a file (name_ptr, name_len, buf_ptr, buf_len); returns 0 or -1 |
 | `"env"."fs_size"` | `(param i32 i32) → i32` | Return file size in bytes (name_ptr, name_len), or -1 if not found |
+| `"env"."fb_set_pixel"` | `(param i32 i32 i32)` | Write one pixel to the framebuffer (x, y, rgb as 0x00RRGGBB) |
+| `"env"."fb_present"` | `()` | Present the framebuffer (no-op; reserved for future double-buffering) |
 
 ---
 
@@ -171,20 +176,23 @@ Compile with `wat2wasm`, place under `userland/`, run `tools/wasm-pack.sh`.
 +-----------------------------+
 |  WASM Interpreter           |  ← kernel/src/wasm/
 |  - loader, engine, interp   |
-|  - host function dispatch   |
-|  - task scheduler           |
+|  - host function registry   |
+|  - cooperative task layer   |
 +-----------------------------+
 |  Shell + FAT Filesystem     |  ← kernel/src/shell/, kernel/src/fs/
 |  - commands, CWD tracking   |
 |  - virtio-blk + ramdisk     |
 +-----------------------------+
 |  Kernel (no_std Rust)       |  ← kernel/src/
-|  - framebuffer, keyboard    |
-|  - interrupts, PIT timer    |
+|  - framebuffer, serial      |
+|  - PS/2 keyboard, PIT timer |
+|  - interrupts, page tables  |
 +-----------------------------+
 |  x86_64 bare metal / QEMU   |
 +-----------------------------+
 ```
+
+For full details see [docs/architecture.md](docs/architecture.md) and [docs/wasm-runtime.md](docs/wasm-runtime.md).
 
 ---
 
@@ -193,12 +201,12 @@ Compile with `wat2wasm`, place under `userland/`, run `tools/wasm-pack.sh`.
 - **Control:** `block` `loop` `if/else/end` `br` `br_if` `br_table` `return` `nop` `unreachable`
 - **Calls:** `call` `call_indirect`
 - **Stack:** `drop` `select`
-- **Locals:** `local.get` `local.set` `local.tee`
-- **Globals:** `global.get` `global.set`
-- **Memory:** `i32.load` `i64.load` `i32.load8_u` `i32.store` `i64.store` `i32.store8` `memory.size` `memory.grow`
-- **i32:** full arithmetic, bitwise, and comparison suite
-- **i64:** arithmetic, bitwise, and comparison suite
-- **Conversions:** `i32.wrap_i64` `i64.extend_i32_s` `i64.extend_i32_u`
+- **Locals/Globals:** `local.get/set/tee` `global.get/set`
+- **Memory:** full load/store suite for i32, i64, f32, f64 (including narrow widths); `memory.size`; `memory.grow`
+- **i32:** full arithmetic, bitwise, comparison, and sign-extension suite
+- **i64:** full arithmetic, bitwise, comparison, and sign-extension suite
+- **f32/f64:** full arithmetic, comparison, and conversion suite (via `libm`)
+- **Conversions:** wrap, extend, trunc, convert, demote, promote, reinterpret; saturating trunc (`0xFC` prefix)
 
 See [docs/wasm-runtime.md](docs/wasm-runtime.md) for the complete opcode table.
 
@@ -209,13 +217,13 @@ See [docs/wasm-runtime.md](docs/wasm-runtime.md) for the complete opcode table.
 | Sprint | Focus | Status |
 |---|---|---|
 | 1–4 | MVP: boot, framebuffer, keyboard, WASM interpreter, shell, in-memory FS | Done |
-| A | WASM spec completeness (i64, globals, `call_indirect`, `br_table`) | Done |
-| B | Runtime isolation — instance pool, named host registry, `ps` | Done |
-| C | Preemptive scheduling — PIT timer, task queue, `task-run`/`task-kill` | Done |
-| D | Persistent filesystem — virtio-blk, FAT12/16/32, shell FS commands | Done |
-| E | Networking — virtio-net, TCP/IP, socket host functions | Planned |
-| F | JIT compilation — x86_64 codegen, tiered execution | Planned |
-| G | In-OS WAT assembler — edit, assemble, and run without host tools | Planned |
+| A | WASM spec completeness: i64, globals, `call_indirect`, `br_table`, f32/f64 | Done |
+| B | Runtime isolation: instance pool, named host registry, `ps` | Done |
+| C | Cooperative scheduling: PIT timer, task queue, `task-run`/`task-kill`/`tasks` | Done |
+| D | Persistent filesystem: virtio-blk, FAT12/16/32, shell FS commands | Done |
+| E | Networking: virtio-net, TCP/IP, socket host functions | Planned |
+| F | JIT compilation: x86_64 codegen, tiered execution | Planned |
+| G | In-OS WAT assembler: edit, assemble, and run without host tools | In progress |
 
 ---
 

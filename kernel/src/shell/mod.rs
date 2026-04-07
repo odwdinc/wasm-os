@@ -1,4 +1,8 @@
-// shell/mod.rs — command dispatcher, tokenizer, history, parse helpers
+//! Shell command dispatcher, tokenizer, history ring buffer, and parse helpers.
+//!
+//! The entry point for each user command is [`run_command`].  The shell is
+//! driven non-blockingly by [`input::poll_once`] from the scheduler; blocking
+//! keyboard reads are used only by WASM host functions (`read_char`, `read_line`).
 
 pub mod input;
 mod commands;
@@ -79,16 +83,25 @@ impl HistoryBuf {
 
 static mut HISTORY: HistoryBuf = HistoryBuf::new();
 
+/// Return the number of entries currently in the history ring buffer (0–16).
 pub(crate) fn history_len() -> usize {
     unsafe { (*core::ptr::addr_of!(HISTORY)).len }
 }
 
+/// Return the `i`-th history entry (0 = oldest visible).
+///
+/// Returns an empty string if `i` is out of range.
 pub(crate) fn history_get(i: usize) -> &'static str {
     unsafe { (*core::ptr::addr_of!(HISTORY)).get(i) }
 }
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
+/// Tokenize and dispatch one shell command line.
+///
+/// Lines that are empty or start with `'#'` are silently ignored.
+/// Non-empty lines are added to the history ring buffer before dispatch.
+/// Unknown command names print `"unknown command: <name>"`.
 pub fn run_command(line: &str) {
     if line.is_empty() || line.starts_with('#') {
         return;
@@ -161,6 +174,9 @@ fn tokenize<'a>(line: &'a str, out: &mut [&'a str; MAX_ARGS]) -> Result<usize, S
 
 // ─── Parse helpers ────────────────────────────────────────────────────────────
 
+/// Parse a decimal integer string (with optional leading `-`) into an `i32`.
+///
+/// Returns `None` on empty input, non-digit characters, or overflow.
 pub(crate) fn parse_i32(s: &str) -> Option<i32> {
     let bytes = s.as_bytes();
     if bytes.is_empty() { return None; }
@@ -174,6 +190,9 @@ pub(crate) fn parse_i32(s: &str) -> Option<i32> {
     Some(if negative { -val } else { val })
 }
 
+/// Parse a non-negative decimal integer string into a `usize`.
+///
+/// Returns `None` on empty input, non-digit characters, or overflow.
 pub(crate) fn parse_usize(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     if bytes.is_empty() { return None; }

@@ -21,10 +21,15 @@ unsafe fn inb(port: u16) -> u8 {
 /// Tracks whether either Shift key is currently held.
 static SHIFT: AtomicBool = AtomicBool::new(false);
 
+/// A decoded key event from the PS/2 keyboard (or serial terminal).
 pub enum Key {
+    /// A printable character.
     Char(char),
+    /// The Backspace key (scancode `0x0E`).
     Backspace,
+    /// The Enter / Return key (scancode `0x1C`).
     Enter,
+    /// Any scancode that could not be mapped to a character.
     Unknown,
 }
 
