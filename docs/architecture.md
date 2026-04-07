@@ -104,7 +104,8 @@ Stack size: 1 MiB (configured via `BootloaderConfig`; WASM interpreter frames ar
 | `info [name]` | `info.rs` | Module section info or tick count |
 | `run <name> [args]` | `run.rs` | Execute a `.wasm` module synchronously |
 | `ps` | `ps.rs` | List active WASM instance pool slots |
-| `task-run <name>` | `tasks.rs` | Spawn a module as a background task |
+| `task-run <name> [args...]` | `tasks.rs` | Spawn a module as a background task; args forwarded to `main` |
+| `<name> [args...]` | `shell/mod.rs` | Auto-spawn: if `<name>.wasm` exists on the filesystem, equivalent to `task-run <name>.wasm [args...]` |
 | `task-kill <id>` | `tasks.rs` | Kill a task by ID |
 | `tasks` | `tasks.rs` | List all tasks with state |
 

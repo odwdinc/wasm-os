@@ -6,6 +6,7 @@
 
 pub mod input;
 mod commands;
+mod command_line_editor;
 
 // ─── Working directory ────────────────────────────────────────────────────────
 
@@ -137,7 +138,19 @@ pub fn run_command(line: &str) {
         "task-run"  => commands::tasks::task_run(&argv[1..argc]),
         "task-kill" => commands::tasks::task_kill(&argv[1..argc]),
         "tasks"     => commands::tasks::list(),
-        _           => { crate::println!("unknown command: {}", argv[0]); }
+        _ => {
+            // If <name>.wasm exists on the filesystem, auto-spawn it as a task.
+            let mut wasm_buf = [0u8; MAX_LINE + 5];
+            let nb = argv[0].as_bytes();
+            wasm_buf[..nb.len()].copy_from_slice(nb);
+            wasm_buf[nb.len()..nb.len() + 5].copy_from_slice(b".wasm");
+            let wasm_name = core::str::from_utf8(&wasm_buf[..nb.len() + 5]).unwrap_or("");
+            if !wasm_name.is_empty() && crate::fs::find_file(wasm_name).is_some() {
+                commands::tasks::task_run_with(wasm_name, &argv[1..argc]);
+            } else {
+                crate::println!("unknown command: {}", argv[0]);
+            }
+        }
     }
 }
 

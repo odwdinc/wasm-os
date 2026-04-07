@@ -159,7 +159,7 @@ See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdo
 | `engine::start_task(handle, entry, args)` | Begin executing `entry`; may yield |
 | `engine::resume_task(handle)` | Continue a suspended task |
 | `engine::run(bytes, entry, args)` | Convenience: spawn + run to completion + destroy |
-| `task::task_spawn(name, bytes)` | Instantiate + register as a cooperative task |
+| `task::task_spawn(name, bytes, args)` | Instantiate + register as a cooperative task; `args` are forwarded to `main` |
 | `task::task_kill(id)` | Remove task and free pool slot |
 | `task::task_step(id)` | Advance task one step (start or resume) |
 | `task::is_task_runnable(id)` | True if the task can be stepped now |

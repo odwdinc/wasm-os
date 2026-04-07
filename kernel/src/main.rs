@@ -15,6 +15,9 @@ mod wasm;
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use core::panic::PanicInfo;
 
+use vga::{RESET, FG_RED, CURSOR_UP, CURSOR_DOWN, CURSOR_RIGHT, CURSOR_LEFT, CLEAR_SCREEN, CURSOR_POSITION, CLEAR_LINE};
+
+
 const BOOTLOADER_CONFIG: BootloaderConfig = {
     let mut c = BootloaderConfig::new_default();
     // Stack budget (worst case — no NRVO through Result/map_err/? chain):
@@ -121,7 +124,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("wasm boot error: {}", e.as_str());
         }
     }
-
     println!("Type 'help' for commands.");
     scheduler::run();
 }

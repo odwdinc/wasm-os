@@ -243,6 +243,13 @@ fn host_read_char(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Resul
             Key::Char(c) => break c as i32,
             Key::Enter   => break 10,
             Key::Backspace | Key::Unknown => continue,
+            Key::ArrowLeft => continue,
+            Key::ArrowRight => continue,
+            Key::ArrowUp => continue,
+            Key::ArrowDown => continue,
+            Key::Delete => continue,
+            Key::Home => continue,
+            Key::End => continue,
         }
     };
     vstack[*vsp] = code as i64;
@@ -290,6 +297,13 @@ fn host_read_line(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result
                     crate::print!("{}", c);
                 }
             }
+            Key::ArrowLeft => {},
+            Key::ArrowRight => {},
+            Key::ArrowUp => {},
+            Key::ArrowDown => {},
+            Key::Delete => {},
+            Key::Home => {},
+            Key::End => {},
             _ => {}
         }
     }

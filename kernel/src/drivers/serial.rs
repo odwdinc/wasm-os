@@ -96,3 +96,15 @@ pub fn read_byte() -> Option<u8> {
         }
     }
 }
+
+
+// ── Key decoding ──────────────────────────────────────────────────────────────
+use crate::drivers::keyboard::{ Key};
+pub fn serial_byte_to_key(b: u8) -> Key {
+    match b {
+        0x08 | 0x7F       => Key::Backspace,
+        0x0D | 0x0A       => Key::Enter,
+        0x20..=0x7E       => Key::Char(b as char),
+        _                 => Key::Unknown,
+    }
+}

@@ -31,7 +31,7 @@ pub fn run() -> ! {
         let had_input = crate::shell::input::poll_once(&mut shell);
 
         // ── WASM task turn (round-robin) ──────────────────────────────────────
-        let ran_task = run_next_task();
+        let ran_task = run_next_task(&mut shell);
 
         // ── Idle: sleep until the next timer interrupt ────────────────────────
         if !had_input && !ran_task {
@@ -41,7 +41,9 @@ pub fn run() -> ! {
 }
 
 /// Find and step the next runnable task.  Returns true if a task was stepped.
-fn run_next_task() -> bool {
+/// Requests a shell prompt redraw after a task finishes so the prompt
+/// appears below any task output rather than staying buried above it.
+fn run_next_task(shell: &mut crate::shell::input::ShellState) -> bool {
     let start = unsafe { (CURSOR + 1) % MAX_TASKS };
 
     for i in 0..MAX_TASKS {
@@ -51,9 +53,11 @@ fn run_next_task() -> bool {
             match task::task_step(id) {
                 Some(Ok(TaskResult::Completed(_))) => {
                     crate::println!("[task {}] done", id);
+                    shell.request_render();
                 }
                 Some(Err(e)) => {
                     crate::println!("[task {}] error: {}", id, e.as_str());
+                    shell.request_render();
                 }
                 _ => {}
             }

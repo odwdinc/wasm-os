@@ -36,12 +36,17 @@ pub enum TaskState {
 
 // ── Task record ───────────────────────────────────────────────────────────────
 
+const MAX_TASK_ARGS: usize = 8;
+
 struct Task {
     state:      TaskState,
     /// Handle into the engine's instance pool.
     instance:   usize,
     name:       [u8; MAX_NAME],
     name_len:   usize,
+    /// Parsed i32 arguments forwarded to `main` on first step.
+    wasm_args:  [i32; MAX_TASK_ARGS],
+    wasm_argc:  usize,
 }
 
 // ── Static queue ──────────────────────────────────────────────────────────────
@@ -54,6 +59,10 @@ static mut TASK_QUEUE: [Option<Task>; MAX_TASKS] = [BLANK; MAX_TASKS];
 
 /// Instantiate `bytes` as a new task and return its task ID.
 ///
+/// `args` are the i32 values passed to the `main` export on first execution.
+/// They are stored in the task record and forwarded by [`task_step`] when the
+/// task transitions from [`TaskState::Ready`] to [`TaskState::Running`].
+///
 /// Calls [`engine::spawn`](crate::wasm::engine::spawn) to obtain a pool slot,
 /// then registers the slot in the static task queue.
 ///
@@ -61,7 +70,7 @@ static mut TASK_QUEUE: [Option<Task>; MAX_TASKS] = [BLANK; MAX_TASKS];
 ///
 /// Propagates [`RunError`](crate::wasm::engine::RunError) from the engine
 /// (e.g. `PoolFull`, `ImportNotFound`, parse errors).
-pub fn task_spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
+pub fn task_spawn(name: &str, bytes: &'static [u8], args: &[i32]) -> Result<usize, RunError> {
     let slot = unsafe {
         (*core::ptr::addr_of!(TASK_QUEUE)).iter().position(|t| t.is_none()).ok_or(RunError::PoolFull)?
     };
@@ -73,12 +82,18 @@ pub fn task_spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
     let mut task_name = [0u8; MAX_NAME];
     task_name[..nl].copy_from_slice(&nb[..nl]);
 
+    let mut wasm_args = [0i32; MAX_TASK_ARGS];
+    let wasm_argc = args.len().min(MAX_TASK_ARGS);
+    wasm_args[..wasm_argc].copy_from_slice(&args[..wasm_argc]);
+
     unsafe {
         TASK_QUEUE[slot] = Some(Task {
             state:    TaskState::Ready,
             instance,
             name:     task_name,
             name_len: nl,
+            wasm_args,
+            wasm_argc,
         });
     }
     Ok(slot)
@@ -142,8 +157,13 @@ pub fn task_step(id: usize) -> Option<Result<TaskResult, RunError>> {
 
     let result = match state {
         TaskState::Ready => {
-            unsafe { if let Some(t) = TASK_QUEUE[id].as_mut() { t.state = TaskState::Running; } }
-            Some(engine::start_task(instance, "main", &[]))
+            let (wasm_args, wasm_argc) = unsafe {
+                TASK_QUEUE[id].as_mut().map(|t| {
+                    t.state = TaskState::Running;
+                    (t.wasm_args, t.wasm_argc)
+                }).unwrap_or(([0i32; MAX_TASK_ARGS], 0))
+            };
+            Some(engine::start_task(instance, "main", &wasm_args[..wasm_argc]))
         }
         TaskState::Suspended => {
             unsafe { if let Some(t) = TASK_QUEUE[id].as_mut() { t.state = TaskState::Running; } }

@@ -117,7 +117,8 @@ The kernel always tries to mount `disk.img` via virtio-blk first. If that fails 
 | `info [name]` | Show module section info, or tick count if no name |
 | `run <name> [args...]` | Execute a `.wasm` module synchronously |
 | `ps` | List active WASM instance pool slots |
-| `task-run <name>` | Spawn a module as a background task |
+| `task-run <name> [args...]` | Spawn a module as a background task |
+| `<name> [args...]` | Auto-spawn: if `<name>.wasm` exists, equivalent to `task-run <name>.wasm [args...]` |
 | `task-kill <id>` | Kill a task by ID |
 | `tasks` | List all tasks with state |
 

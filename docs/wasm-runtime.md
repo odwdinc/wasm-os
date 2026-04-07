@@ -317,7 +317,7 @@ the round-robin scheduler.
 
 | Function | Description |
 |---|---|
-| `task_spawn(name, bytes) -> Result<usize, RunError>` | Instantiate + register; returns task ID |
+| `task_spawn(name, bytes, args: &[i32]) -> Result<usize, RunError>` | Instantiate + register; `args` forwarded to `main` on first step; returns task ID |
 | `task_kill(id)` | Remove task and free engine pool slot |
 | `task_state(id) -> Option<TaskState>` | Query current state |
 | `task_step(id) -> Option<Result<TaskResult, RunError>>` | Advance one step; start or resume |

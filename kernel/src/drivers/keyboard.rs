@@ -29,6 +29,13 @@ pub enum Key {
     Backspace,
     /// The Enter / Return key (scancode `0x1C`).
     Enter,
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
+    ArrowDown,
+    Delete,
+    Home,
+    End,
     /// Any scancode that could not be mapped to a character.
     Unknown,
 }
@@ -53,6 +60,14 @@ pub fn try_next_key() -> Option<Key> {
     Some(match sc {
         0x0E => Key::Backspace,
         0x1C => Key::Enter,
+        0x4B => Key::ArrowLeft,
+        0x4D => Key::ArrowRight,
+        0x48 => Key::ArrowUp,
+        0x50 => Key::ArrowDown,
+        0x53 => Key::Delete,
+        0x47 => Key::Home,
+        0x4F => Key::End,
+
         _ => match scancode_to_char(sc, shift) {
             Some(c) => Key::Char(c),
             None    => Key::Unknown,
@@ -93,6 +108,13 @@ pub fn next_key() -> Key {
         return match sc {
             0x0E => Key::Backspace,
             0x1C => Key::Enter,
+            0x4B => Key::ArrowLeft,
+            0x4D => Key::ArrowRight,
+            0x48 => Key::ArrowUp,
+            0x50 => Key::ArrowDown,
+            0x53 => Key::Delete,
+            0x47 => Key::Home,
+            0x4F => Key::End,
             _ => match scancode_to_char(sc, shift) {
                 Some(c) => Key::Char(c),
                 None => Key::Unknown,
