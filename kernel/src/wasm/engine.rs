@@ -64,7 +64,7 @@ pub fn take_pending_sleep_ms() -> u32 {
 // ── Capacity limits ───────────────────────────────────────────────────────────
 
 /// Maximum WASM pages (64 KiB each) any module may request.
-pub const MAX_MEM_PAGES: u32  = 16;
+pub const MAX_MEM_PAGES: u32  = 32;
 /// Maximum simultaneously live instances.
 pub const MAX_INSTANCES: usize = 4;
 const PAGE_SIZE: usize = 65536;
@@ -464,10 +464,29 @@ fn host_fb_set_pixel(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Re
 }
 
 /// `fb_present()` — present the framebuffer (no-op on this single-buffered display).
-///
-/// Provided as a hook for future double-buffering support.  Calling it now is
-/// safe but has no effect.
 fn host_fb_present(_vstack: &mut [i64], _vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    Ok(())
+}
+
+/// `fb_blit(ptr: i32, width: i32, height: i32)` — blit a packed 0x00RRGGBB
+/// pixel buffer from WASM linear memory to the framebuffer in one lock cycle.
+/// Pixels are stored as little-endian u32 values in WASM memory.
+fn host_fb_blit(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 3 { return Err(InterpError::StackUnderflow); }
+    let height = vstack[*vsp - 1] as usize;
+    let width  = vstack[*vsp - 2] as usize;
+    let ptr    = vstack[*vsp - 3] as usize;
+    *vsp -= 3;
+    let pixel_count = width.saturating_mul(height);
+    let byte_count  = pixel_count.saturating_mul(4);
+    if ptr.saturating_add(byte_count) > mem.len() { return Ok(()); }
+    // Reinterpret the WASM byte slice as a &[u32] (little-endian, 4-byte aligned).
+    // WASM linear memory is always aligned to at least 4 bytes at ptr==0, and
+    // our buffer is Vec<u32> so ptr is 4-byte aligned.
+    let pixels: &[u32] = unsafe {
+        core::slice::from_raw_parts(mem.as_ptr().add(ptr) as *const u32, pixel_count)
+    };
+    crate::vga::blit_rgb32(pixels, width, height);
     Ok(())
 }
 
@@ -496,6 +515,7 @@ pub fn init_host_fns() {
     register_host("env", "args_get",     host_args_get);
     register_host("env", "fb_set_pixel", host_fb_set_pixel);
     register_host("env", "fb_present",   host_fb_present);
+    register_host("env", "fb_blit",      host_fb_blit);
 }
 
 /// Print an i32 as decimal followed by a newline, without heap allocation.

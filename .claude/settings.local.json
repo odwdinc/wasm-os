@@ -6,7 +6,10 @@
       "Bash(chmod +x:*)",
       "Bash(cat /work/scripts/*.sh)",
       "Bash(cat /work/tools/*.sh)",
-      "Bash(cat /work/kernel/src/memory/*.rs)"
+      "Bash(cat /work/kernel/src/memory/*.rs)",
+      "Bash(cat /work/userland/*/Cargo.toml)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl:*)"
     ]
   }
 }

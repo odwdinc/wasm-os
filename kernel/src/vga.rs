@@ -655,6 +655,39 @@ pub fn clear_screen() {
     }
 }
 
+/// Blit a packed pixel buffer to the top-left of the framebuffer.
+///
+/// `buf` contains `width * height` u32 values each packed as `0x00RRGGBB`.
+/// Acquires the framebuffer lock **once** for the whole operation.
+pub fn blit_rgb32(buf: &[u32], width: usize, height: usize) {
+    if let Some(w) = WRITER.lock().as_mut() {
+        let bpp    = w.info.bytes_per_pixel;
+        let stride = w.info.stride;
+        let bgr    = matches!(w.info.pixel_format, PixelFormat::Bgr);
+        for y in 0..height {
+            for x in 0..width {
+                let rgb = buf[y * width + x];
+                let r = ((rgb >> 16) & 0xFF) as u8;
+                let g = ((rgb >>  8) & 0xFF) as u8;
+                let b = ( rgb        & 0xFF) as u8;
+                let off = (y * stride + x) * bpp;
+                if off + bpp > w.buf_len { continue; }
+                unsafe {
+                    if bgr {
+                        w.buf.add(off).write_volatile(b);
+                        w.buf.add(off + 1).write_volatile(g);
+                        w.buf.add(off + 2).write_volatile(r);
+                    } else {
+                        w.buf.add(off).write_volatile(r);
+                        w.buf.add(off + 1).write_volatile(g);
+                        w.buf.add(off + 2).write_volatile(b);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Write one pixel directly to the framebuffer, bypassing the text cursor.
 ///
 /// `x` and `y` are pixel coordinates from the top-left corner.  Out-of-bounds

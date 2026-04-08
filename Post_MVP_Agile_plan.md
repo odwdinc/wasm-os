@@ -379,9 +379,9 @@ Interpreter remains as fallback for unsupported patterns.
 
 ### 1. Code Generation Infrastructure
 
-* [ ] Emit x86_64 machine code into a fixed executable buffer (`static mut`)
-* [ ] Mark buffer executable (`NX` bit management, or identity-map with exec permissions)
-* [ ] Function prologue/epilogue (save callee-saved regs, set up frame)
+* [x] Emit x86_64 machine code into a fixed executable buffer (`static mut`)
+* [x] Mark buffer executable (`NX` bit management, or identity-map with exec permissions)
+* [x] Function prologue/epilogue (save callee-saved regs, set up frame)
 
 ---
 

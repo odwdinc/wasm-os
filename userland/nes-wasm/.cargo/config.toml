@@ -1,0 +1,15 @@
+[build]
+target = "wasm32-unknown-unknown"
+
+[target.wasm32-unknown-unknown]
+# Reduce the default 1 MB shadow stack to 64 KB so linear memory fits
+# within the kernel's MAX_MEM_PAGES budget.
+#
+# Disable bulk-memory (memory.copy / memory.fill / memory.init) — the kernel
+# interpreter does not implement 0xFC sub-ops >= 8.  LLVM will emit plain
+# loops instead.
+rustflags = [
+    "-C", "link-arg=-z",
+    "-C", "link-arg=stack-size=65536",
+    "-C", "target-feature=-bulk-memory",
+]

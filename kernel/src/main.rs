@@ -6,6 +6,7 @@ extern crate alloc;
 mod drivers;
 mod fs;
 mod interrupts;
+mod jit;
 mod memory;
 mod scheduler;
 mod shell;
@@ -126,6 +127,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
+    println!("KERNEL PANIC: {}", info);
     loop {}
 }

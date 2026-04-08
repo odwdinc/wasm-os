@@ -20,11 +20,55 @@ pub fn init(phys_mem_offset: u64) {
     unsafe { PHYS_MEM_OFFSET = phys_mem_offset; }
 }
 
+/// Return the physical-memory window base set by [`init`].
+///
+/// Used by the JIT module to write page-table entries (clear NX, set W).
+#[inline]
+pub fn phys_mem_offset() -> u64 {
+    unsafe { PHYS_MEM_OFFSET }
+}
+
 /// Read a `u64` from a physical address through the physical memory window.
 #[inline]
 fn read_phys_u64(phys: u64) -> u64 {
     let virt = unsafe { PHYS_MEM_OFFSET } + phys;
     unsafe { core::ptr::read_volatile(virt as *const u64) }
+}
+
+/// Write a `u64` to a physical address through the physical memory window.
+#[inline]
+pub fn write_phys_u64(phys: u64, val: u64) {
+    let virt = unsafe { PHYS_MEM_OFFSET } + phys;
+    unsafe { core::ptr::write_volatile(virt as *mut u64, val); }
+}
+
+/// Find the physical address of the PTE that maps `virt`, along with the
+/// current PTE value.  Returns `None` if any level is not present.
+///
+/// Only handles 4 KiB pages (not 2 MiB / 1 GiB huge pages).
+pub fn find_pte(virt: usize) -> Option<(u64 /*pte_phys*/, u64 /*pte_val*/)> {
+    let v = virt as u64;
+    let cr3: u64;
+    unsafe { core::arch::asm!("mov {:r}, cr3", out(reg) cr3) };
+    let pml4_phys = cr3 & !0xFFF_u64;
+
+    let pml4e = read_phys_u64(pml4_phys + ((v >> 39) & 0x1FF) * 8);
+    if pml4e & 1 == 0 { return None; }
+    let pdpt_phys = pml4e & 0x000F_FFFF_FFFF_F000;
+
+    let pdpte = read_phys_u64(pdpt_phys + ((v >> 30) & 0x1FF) * 8);
+    if pdpte & 1 == 0 { return None; }
+    if pdpte & (1 << 7) != 0 { return None; } // 1 GiB page — no PTE
+
+    let pd_phys = pdpte & 0x000F_FFFF_FFFF_F000;
+    let pde = read_phys_u64(pd_phys + ((v >> 21) & 0x1FF) * 8);
+    if pde & 1 == 0 { return None; }
+    if pde & (1 << 7) != 0 { return None; } // 2 MiB page — no PTE
+
+    let pt_phys = pde & 0x000F_FFFF_FFFF_F000;
+    let pte_phys = pt_phys + ((v >> 12) & 0x1FF) * 8;
+    let pte_val  = read_phys_u64(pte_phys);
+    Some((pte_phys, pte_val))
 }
 
 /// Translate a kernel virtual address to its physical address.

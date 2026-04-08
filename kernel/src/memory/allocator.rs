@@ -2,14 +2,15 @@
 //
 // Provides a simple bump allocator that satisfies `GlobalAlloc`.
 // Allocation advances a pointer forward; deallocation is a no-op.
-// Total heap: 512 KiB — enough for fatfs internal structures.
+// Total heap: 8 MiB — covers fatfs structures, shell state, heap-backed file
+// pool (for large WASM modules and ROM data), and WASM runtime heap allocs.
 //
 // Single-core bare-metal: uses a raw static for the next pointer
 // (no atomics needed, no preemption).
 
 use core::alloc::{GlobalAlloc, Layout};
 
-const HEAP_SIZE: usize = 512 * 1024; // 512 KiB
+const HEAP_SIZE: usize = 8 * 1024 * 1024; // 8 MiB
 
 #[repr(C, align(16))]
 struct HeapBuf([u8; HEAP_SIZE]);

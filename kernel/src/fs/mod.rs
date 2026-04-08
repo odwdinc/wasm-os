@@ -18,7 +18,7 @@
 //! | Pool | Slots | Slot size | Purpose |
 //! |------|-------|-----------|---------|
 //! | `FILE_TABLE` | 64 | — | Name → `&'static [u8]` registry |
-//! | `DISK_POOL` | 64 | [`DISK_SLOT_SIZE`] (8 KiB) | Files loaded from FAT at boot |
+//! | `FILE_BUF`  | —  | 4 MiB arena    | Files loaded from FAT at boot |
 //! | `WRITE_POOL` | 16 | 4 KiB | Files written during the session |
 
 pub mod block;
@@ -160,49 +160,46 @@ pub fn alloc_write_buf(data: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
-// ── Static pool for files loaded from a virtio-blk disk at boot ─────────────
+// ── Static file-data arena for files loaded from disk at boot ────────────────
 //
-// Each slot is 8 KiB — large enough for typical WASM demo modules.
-// Slots are allocated once and never freed (single-session lifetime).
+// A dedicated bump arena separate from the kernel heap.  No heap competition,
+// no panic on OOM — alloc_disk_slot simply returns None when full.
+//
+// Total capacity: 4 MiB — enough for all WASM modules + ROM files combined.
+// Increase FILE_BUF_SIZE if more space is needed.
 
-pub const DISK_SLOT_SIZE: usize = 8192;
-const DISK_SLOTS: usize = 64;
+const FILE_BUF_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
+const DISK_SLOTS:    usize = 64;
 
-static mut DISK_POOL: [[u8; DISK_SLOT_SIZE]; DISK_SLOTS] =
-    [[0u8; DISK_SLOT_SIZE]; DISK_SLOTS];
-static mut DISK_POOL_NEXT: usize = 0;
+// SAFETY: accessed only on the single kernel thread, before any tasks start.
+#[repr(C, align(8))]
+struct FileBuf([u8; FILE_BUF_SIZE]);
+static mut FILE_BUF:      FileBuf = FileBuf([0u8; FILE_BUF_SIZE]);
+static mut FILE_BUF_NEXT: usize   = 0;
 
-/// Claim a disk-pool slot large enough to hold `len` bytes.
+/// Carve `len` bytes from the static file-data arena.
 ///
-/// Returns a raw pointer to the slot's start (for caller-managed copying),
-/// or `None` if the pool is exhausted or `len > DISK_SLOT_SIZE`.
-///
-/// # Safety
-///
-/// The caller must write exactly `len` bytes at the returned pointer before
-/// constructing a `&'static [u8]` slice from it.
+/// Returns a raw pointer aligned to 8 bytes, or `None` if the arena is
+/// exhausted or `len == 0`.  Callers must write all `len` bytes before
+/// constructing a `&'static [u8]` slice.
 pub fn alloc_disk_slot(len: usize) -> Option<*mut u8> {
-    if len > DISK_SLOT_SIZE {
-        return None;
-    }
+    if len == 0 { return None; }
     unsafe {
-        if DISK_POOL_NEXT >= DISK_SLOTS {
-            return None;
-        }
-        let idx = DISK_POOL_NEXT;
-        DISK_POOL_NEXT += 1;
-        Some(DISK_POOL[idx].as_mut_ptr())
+        let base    = (FILE_BUF_NEXT + 7) & !7; // 8-byte alignment
+        let new_end = base + len;
+        if new_end > FILE_BUF_SIZE { return None; }
+        FILE_BUF_NEXT = new_end;
+        Some(FILE_BUF.0.as_mut_ptr().add(base))
     }
 }
 
 // ── FAT boot loader ──────────────────────────────────────────────────────────
 
-/// Read every file from the mounted FAT volume into the static disk-pool and
-/// register each one in the in-memory table.
+/// Read every file from the mounted FAT volume into the static file-data arena
+/// and register each one in the in-memory table.
 ///
-/// Must be called once at boot after a successful FAT mount.  Files larger
-/// than [`DISK_SLOT_SIZE`] (8 KiB) or beyond the 64-slot pool capacity are
-/// silently skipped.
+/// Must be called once at boot after a successful FAT mount.  Files that
+/// exceed the arena's remaining capacity are silently skipped.
 pub fn load_fat_files_to_table() {
     // Collect names first to avoid holding the FAT lock while writing to pool.
     let mut names: [Option<([u8; 64], usize)>; DISK_SLOTS] = [None; DISK_SLOTS];

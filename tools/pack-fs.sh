@@ -114,8 +114,8 @@ COUNT=0
 for f in "${FILES[@]}"; do
     name="$(basename "$f")"
     size="$(wc -c < "$f")"
-    mcopy -i "$FSIMG"   "$f" "::/$name"
-    mcopy -i "$DISKIMG" "$f" "::/$name"
+    mcopy -o -i "$FSIMG"   "$f" "::/$name"
+    mcopy -o -i "$DISKIMG" "$f" "::/$name"
     echo "  packed: $name ($size bytes)"
     COUNT=$((COUNT + 1))
 done

@@ -151,7 +151,7 @@ pub const MAX_TABLE:      usize = 512;
 const NULL_FUNC: u32 = u32::MAX; // sentinel for an uninitialised table entry
 
 /// Maximum total block/loop/if nesting depth across all live call frames.
-pub const MAX_CTRL_DEPTH: usize = 64;
+pub const MAX_CTRL_DEPTH: usize = 128;
 /// Depth of the value stack (`i64` entries).
 pub const STACK_DEPTH:    usize = 256;
 /// Maximum call-stack depth (number of simultaneously live call frames).
@@ -1398,7 +1398,58 @@ impl<'a> Interpreter<'a> {
                             let v = if a.is_nan() || a < 0.0 { 0u64 } else if a >= 18446744073709551616.0_f64 { u64::MAX } else { a as u64 };
                             self.v_push(v as i64)?;
                         }
-                        _ => return Err(InterpError::UnknownOpcode(0xFC)),
+                        // ── bulk-memory ops ───────────────────────────────────────
+                        8 => { // memory.init <seg> 0x00 — copy from passive data segment
+                            let fi = self.fdepth - 1;
+                            let pc = self.frames[fi].pc;
+                            let body = self.bodies[self.frames[fi].body_idx];
+                            let (_seg, n) = read_u32_leb128(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                            self.frames[fi].pc += n + 1; // skip segment idx + reserved 0x00
+                            let count = self.v_pop()? as usize;
+                            let _src  = self.v_pop()? as usize;
+                            let _dst  = self.v_pop()? as usize;
+                            // Passive segments are already applied at instantiation;
+                            // a zero-length init is a no-op, non-zero is unsupported.
+                            if count != 0 {
+                                crate::println!("[wasm] memory.init with count={} not supported", count);
+                                return Err(InterpError::UnknownOpcode(0xFC));
+                            }
+                        }
+                        9 => { // data.drop <seg> — mark segment as dropped (no-op)
+                            let fi = self.fdepth - 1;
+                            let pc = self.frames[fi].pc;
+                            let body = self.bodies[self.frames[fi].body_idx];
+                            let (_seg, n) = read_u32_leb128(&body[pc..]).ok_or(InterpError::MalformedCode)?;
+                            self.frames[fi].pc += n;
+                        }
+                        10 => { // memory.copy 0x00 0x00
+                            let fi = self.fdepth - 1;
+                            self.frames[fi].pc += 2; // skip two reserved 0x00 bytes
+                            let n   = self.v_pop()? as usize;
+                            let src = self.v_pop()? as usize;
+                            let dst = self.v_pop()? as usize;
+                            let limit = self.current_pages as usize * PAGE_SIZE;
+                            if src.saturating_add(n) > limit || dst.saturating_add(n) > limit {
+                                return Err(InterpError::MemOutOfBounds);
+                            }
+                            self.mem.copy_within(src..src + n, dst);
+                        }
+                        11 => { // memory.fill 0x00
+                            let fi = self.fdepth - 1;
+                            self.frames[fi].pc += 1; // skip reserved 0x00 byte
+                            let n   = self.v_pop()? as usize;
+                            let val = self.v_pop()? as u8;
+                            let dst = self.v_pop()? as usize;
+                            let limit = self.current_pages as usize * PAGE_SIZE;
+                            if dst.saturating_add(n) > limit {
+                                return Err(InterpError::MemOutOfBounds);
+                            }
+                            self.mem[dst..dst + n].fill(val);
+                        }
+                        sub => {
+                            crate::println!("[wasm] unknown 0xFC sub-opcode: 0x{:02X} ({})", sub, sub);
+                            return Err(InterpError::UnknownOpcode(0xFC));
+                        }
                     }
                 }
 
@@ -1454,7 +1505,10 @@ impl<'a> Interpreter<'a> {
                     }
                 }
 
-                other => return Err(InterpError::UnknownOpcode(other)),
+                other => {
+                    crate::println!("[wasm] unknown opcode: 0x{:02X} ({})", other, other);
+                    return Err(InterpError::UnknownOpcode(other));
+                }
             }
         }
         Ok(())
