@@ -28,7 +28,7 @@ mapfile -d '' WASM_FILES < <(find "$ROOT/userland" -name "*.wasm" -print0 | sort
 # Also include any ROM files placed in roms/ at the repo root.
 ROM_FILES=()
 if [ -d "$ROOT/roms" ]; then
-    mapfile -d '' ROM_FILES < <(find "$ROOT/roms" -name "*.nes" -print0 | sort -z)
+    mapfile -d '' ROM_FILES < <(find "$ROOT/roms" -name "*.*" -print0 | sort -z)
 fi
 
 ALL_FS_FILES=("${WASM_FILES[@]}" "${ROM_FILES[@]}")

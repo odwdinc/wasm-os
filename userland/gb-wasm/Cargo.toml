@@ -1,0 +1,18 @@
+[workspace]
+
+[package]
+name = "gb-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+name = "gb"
+
+[dependencies]
+rgy = { git = "https://github.com/YushiOMOTE/rgy" }
+wee_alloc = { version = "0.4", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true

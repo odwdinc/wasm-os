@@ -39,6 +39,21 @@ impl Reg {
     #[inline] pub fn needs_rex(self) -> bool { (self as u8) >= 8 }
 }
 
+
+#[repr(u8)]
+pub enum Cond {
+    E = 0x4,  // equal / zero
+    NE = 0x5, // not equal
+    L = 0xC,  // less (signed)
+    LE = 0xE, // less or equal (signed)
+    G = 0xF,  // greater (signed)
+    GE = 0xD, // greater or equal (signed)
+    B = 0x2,  // below (unsigned)
+    BE = 0x6, // below or equal (unsigned)
+    A = 0x7,  // above (unsigned)
+    AE = 0x3, // above or equal (unsigned)
+}
+
 // ── CodeBuf ───────────────────────────────────────────────────────────────────
 
 /// A write cursor over a mutable byte slice for emitting x86-64 machine code.
@@ -153,7 +168,66 @@ impl<'a> CodeBuf<'a> {
         self.emit_u8(0x58 | reg.enc());
     }
 
-    // ── Arithmetic ────────────────────────────────────────────────────────────
+    // ── Arithmetic (reg←reg) ──────────────────────────────────────────────────
+
+    /// `add dst, src`  (64-bit, dst += src)
+    pub fn emit_add_rr(&mut self, dst: Reg, src: Reg) {
+        self.emit_rex_rr(dst, src);
+        self.emit_u8(0x03); // ADD r64, r/m64
+        self.emit_modrm_rr(dst, src);
+    }
+
+    /// `sub dst, src`  (64-bit, dst -= src)
+    pub fn emit_sub_rr(&mut self, dst: Reg, src: Reg) {
+        self.emit_rex_rr(dst, src);
+        self.emit_u8(0x2B); // SUB r64, r/m64
+        self.emit_modrm_rr(dst, src);
+    }
+
+    /// `and dst, src`  (64-bit, dst &= src)
+    pub fn emit_and_rr(&mut self, dst: Reg, src: Reg) {
+        self.emit_rex_rr(dst, src);
+        self.emit_u8(0x23); // AND r64, r/m64
+        self.emit_modrm_rr(dst, src);
+    }
+
+    /// `or dst, src`  (64-bit, dst |= src)
+    pub fn emit_or_rr(&mut self, dst: Reg, src: Reg) {
+        self.emit_rex_rr(dst, src);
+        self.emit_u8(0x0B); // OR r64, r/m64
+        self.emit_modrm_rr(dst, src);
+    }
+
+    /// `xor dst, src`  (64-bit, dst ^= src)
+    pub fn emit_xor_rr(&mut self, dst: Reg, src: Reg) {
+        self.emit_rex_rr(dst, src);
+        self.emit_u8(0x33); // XOR r64, r/m64
+        self.emit_modrm_rr(dst, src);
+    }
+
+    // ── Memory load / store (64-bit displacement) ──────────────────────────────
+
+    /// `mov dst, [base + byte_offset]`  (64-bit load)
+    pub fn emit_load_mem(&mut self, dst: Reg, base: Reg, byte_offset: i32) {
+        let rex = 0x48
+            | (if dst.needs_rex()  { 0x04 } else { 0 })
+            | (if base.needs_rex() { 0x01 } else { 0 });
+        self.emit_u8(rex);
+        self.emit_u8(0x8B); // MOV r64, r/m64
+        self.emit_mem_modrm(dst, base, byte_offset);
+    }
+
+    /// `mov [base + byte_offset], src`  (64-bit store)
+    pub fn emit_store_mem(&mut self, src: Reg, base: Reg, byte_offset: i32) {
+        let rex = 0x48
+            | (if src.needs_rex()  { 0x04 } else { 0 })
+            | (if base.needs_rex() { 0x01 } else { 0 });
+        self.emit_u8(rex);
+        self.emit_u8(0x89); // MOV r/m64, r64
+        self.emit_mem_modrm(src, base, byte_offset);
+    }
+
+    // ── RSP-relative arithmetic ───────────────────────────────────────────────
 
     /// `add rsp, imm8`
     pub fn emit_add_rsp_i8(&mut self, imm: i8) {
@@ -169,6 +243,131 @@ impl<'a> CodeBuf<'a> {
         self.emit_u8(0x83);             // SUB r/m64, imm8
         self.emit_u8(0xEC);             // ModRM: mod=11, /5, rsp(4)
         self.emit_u8(imm as u8);
+    }
+
+    // ── Multiplication ────────────────────────────────────────────────────────────
+
+    /// `imul dst, src`  (64-bit signed multiply, dst ← dst * src)
+    pub fn emit_imul_rr(&mut self, dst: Reg, src: Reg) {
+        self.emit_rex_rr(dst, src);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xAF);
+        self.emit_modrm_rr(dst, src);
+    }
+
+    // ── Shift operations with CL ─────────────────────────────────────────────────
+
+    /// `sar reg, cl`  (arithmetic right shift by CL)
+    pub fn emit_sar_rcx(&mut self, reg: Reg) {
+        self.emit_rex_rr(Reg::Rcx, reg);
+        self.emit_u8(0xD3);
+        self.emit_u8(0xF8 | reg.enc());  // ModRM: /7 for SAR
+    }
+
+    /// `shl reg, cl`  (logical left shift by CL)
+    pub fn emit_shl_rcx(&mut self, reg: Reg) {
+        self.emit_rex_rr(Reg::Rcx, reg);
+        self.emit_u8(0xD3);
+        self.emit_u8(0xE0 | reg.enc());  // ModRM: /4 for SHL
+    }
+
+    /// `shr reg, cl`  (logical right shift by CL)
+    pub fn emit_shr_rcx(&mut self, reg: Reg) {
+        self.emit_rex_rr(Reg::Rcx, reg);
+        self.emit_u8(0xD3);
+        self.emit_u8(0xE8 | reg.enc());  // ModRM: /5 for SHR
+    }
+
+    // ── Negation ─────────────────────────────────────────────────────────────────
+
+    /// `neg reg`  (two's complement negation)
+    pub fn emit_neg(&mut self, reg: Reg) {
+        self.emit_rex_w();
+        self.emit_u8(0xF7);
+        self.emit_u8(0xD8 | reg.enc());  // ModRM: /3 for NEG
+    }
+
+    // ── Conditional set byte ─────────────────────────────────────────────────────
+
+    /// `setcc cond, reg`  (set byte to 0/1 based on condition flags)
+    pub fn emit_setcc(&mut self, cond: Cond, reg: Reg) {
+        if reg.needs_rex() {
+            self.emit_u8(0x40 | (reg.enc() >> 3));
+        }
+        self.emit_u8(0x0F);
+        self.emit_u8(0x90 | (cond as u8));
+        self.emit_modrm_rr(reg, Reg::Rax);  // ModRM with reg field
+    }
+
+    /// `movzx dst8, src8`  (zero-extend byte to 32-bit)
+    pub fn emit_movzx_r32_r8(&mut self, dst: Reg, src: Reg) {
+        if dst.needs_rex() || src.needs_rex() {
+            self.emit_u8(0x40 | 
+                (if dst.needs_rex() { 0x4 } else { 0 }) |
+                (if src.needs_rex() { 0x1 } else { 0 }));
+        }
+        self.emit_u8(0x0F);
+        self.emit_u8(0xB6);
+        self.emit_modrm_rr(dst, src);
+    }
+
+    // ── Sign/zero extend memory loads ────────────────────────────────────────────
+
+    /// `movsx dst, [base + offset]`  (sign-extend byte to 32-bit)
+    pub fn emit_movsx_r32_mem8(&mut self, dst: Reg, base: Reg, offset: i32) {
+        self.emit_rex_rr(dst, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xBE);
+        self.emit_mem_modrm(dst, base, offset);
+    }
+
+    /// `movzx dst, [base + offset]`  (zero-extend byte to 32-bit)
+    pub fn emit_movzx_r32_mem8(&mut self, dst: Reg, base: Reg, offset: i32) {
+        self.emit_rex_rr(dst, base);
+        self.emit_u8(0x0F);
+        self.emit_u8(0xB6);
+        self.emit_mem_modrm(dst, base, offset);
+    }
+
+    // Helper for memory addressing with displacement
+    fn emit_mem_modrm(&mut self, reg: Reg, base: Reg, offset: i32) {
+        if offset == 0 && base.enc() != 5 {
+            self.emit_u8(0x00 | (reg.enc() << 3) | base.enc());
+        } else if offset >= -128 && offset <= 127 {
+            self.emit_u8(0x40 | (reg.enc() << 3) | base.enc());
+            self.emit_u8(offset as u8);
+        } else {
+            self.emit_u8(0x80 | (reg.enc() << 3) | base.enc());
+            self.emit_i32(offset);
+        }
+    }
+
+    // ── Memory load/store with bounds checking ───────────────────────────────────
+
+    /// Load u64 from [base + offset*8] with bounds checking
+    /// offset_reg should contain byte offset, not element index
+    pub fn emit_mem_load_u64(&mut self, dst: Reg, base: Reg, offset_reg: Reg) {
+        // mov dst, [base + offset_reg]
+        self.emit_rex_rr(dst, base);
+        self.emit_u8(0x8B);
+        if offset_reg == Reg::Rax {
+            self.emit_u8(0x00 | (dst.enc() << 3) | base.enc());
+        } else {
+            self.emit_u8(0x04 | (dst.enc() << 3));  // SIB byte
+            self.emit_u8((offset_reg.enc() << 3) | base.enc());
+        }
+    }
+
+    /// Store u64 from src to [base + offset_reg]
+    pub fn emit_mem_store_u64(&mut self, src: Reg, base: Reg, offset_reg: Reg) {
+        self.emit_rex_rr(src, base);
+        self.emit_u8(0x89);
+        if offset_reg == Reg::Rax {
+            self.emit_u8(0x00 | (src.enc() << 3) | base.enc());
+        } else {
+            self.emit_u8(0x04 | (src.enc() << 3));
+            self.emit_u8((offset_reg.enc() << 3) | base.enc());
+        }
     }
 
     // ── RET ───────────────────────────────────────────────────────────────────
@@ -295,7 +494,9 @@ impl<'a> CodeBuf<'a> {
 
 // ── Type alias for a callable JIT'd function ─────────────────────────────────
 
-/// A JIT-compiled function with no arguments and an `i32` return value.
-/// Cast the `*mut u8` returned by [`super::jit_alloc`] to this type after
-/// calling [`super::make_jit_executable`].
-pub type JitFn = unsafe extern "C" fn() -> i32;
+/// Calling convention for JIT-compiled WASM functions (System V AMD64):
+///   RDI = linear memory base (`*mut u8`)
+///   RSI = globals base      (`*mut i64`)
+///   RDX = locals base       (`*mut i64`, pre-filled by caller with params)
+/// Returns the top-of-operand-stack value as i64 (0 if void).
+pub type JitFn = unsafe extern "C" fn(*mut u8, *mut i64, *mut i64) -> i64;

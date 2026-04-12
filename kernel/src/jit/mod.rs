@@ -43,11 +43,11 @@
 //! ```
 
 pub mod emit;
-
+pub mod compile;
 // ── JIT code buffer ───────────────────────────────────────────────────────────
 
 /// Total size of the JIT code buffer in bytes.
-pub const JIT_BUF_SIZE: usize = 512 * 1024;
+pub const JIT_BUF_SIZE: usize = 2048 * 1024;
 
 /// Static backing store for all generated machine code.
 ///

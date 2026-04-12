@@ -6,8 +6,8 @@
 
 ## Project Status
 
-Sprints 1–4 (MVP) and A–G (runtime completeness, isolation, cooperative scheduling, persistent FS, networking, in-OS WAT assembler) are **done**.  
-See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdown.
+Sprints 1–4 (MVP) and A–E, G (runtime completeness, isolation, scheduling, persistent FS, networking, in-OS WAT assembler) are complete.
+Sprint F (JIT compilation) is in progress — detailed plan in [`JIT_Agile_plan.md`](JIT_Agile_plan.md). Target: NES emulator from 1200ms/frame → 16ms/frame (~75x speedup).
 
 ---
 
@@ -22,6 +22,7 @@ See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdo
 ├── CONTRIBUTING.md
 ├── MVP_Agile_plan.md            # Sprints 1–4 (complete)
 ├── Post_MVP_Agile_plan.md       # Sprints A–G
+├── JIT_Agile_plan.md            # Sprints 0–6
 │
 ├── kernel/                      # The entire working system lives here
 │   ├── build.rs                 # Passes kernel stack size to linker
@@ -303,3 +304,7 @@ When implementing a sprint task:
 | D | virtio-blk driver, FAT12/16/32 via rust-fatfs, persistent disk, full shell FS commands |
 | E | virtio-net PCI driver, hand-rolled ARP/IP/TCP/UDP/DHCP stack, 12 socket host functions, `httpd.wasm` demo |
 | G | In-kernel WAT tokenizer + binary emitter, `asm` shell command, full edit→asm→run round-trip |
+| 0 | (JIT) | Boot Prerequisites Call `make_jit_executable()` |
+| 1 | (JIT) | Instrumentation & Baseline | 
+| 2 | (JIT) | Interpreter Hot-Loop Micro-Optimizations |
+| 3 | (JIT) | JIT Foundation: Calling Convention + Arithmetic |

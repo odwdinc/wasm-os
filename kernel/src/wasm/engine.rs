@@ -1050,6 +1050,10 @@ pub fn spawn(name: &str, bytes: &'static [u8]) -> Result<usize, RunError> {
         }
     }
 
+    // JIT-compile all function bodies that the compiler supports.
+    // Functions that fall back to the interpreter are silently skipped.
+    interp.compile_jit();
+
     // Write instance into the pool slot.
     unsafe {
         let s = &mut POOL[slot];

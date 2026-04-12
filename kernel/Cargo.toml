@@ -3,6 +3,16 @@ name = "kernel"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["jit_shadow"]
+# Compile the JIT subsystem into the interpreter dispatch loop.
+# Disabled when kernel source files are included directly (e.g. wasm-test).
+kernel_jit = []
+# Enable JIT shadow mode: runs every JIT-compiled call through both the JIT
+# and the interpreter and panics/prints on result mismatch.
+# Enabled during Sprint 3-4 development; disabled for production.
+jit_shadow = ["kernel_jit"]
+
 [dependencies]
 shared = { path = "../shared" }
 bootloader_api = "0.11"

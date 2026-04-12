@@ -21,6 +21,7 @@ Cargo.lock
 *.img
 .fs_hash
 *.nes
+*.gb
 opencode.json
 
 # RustRover

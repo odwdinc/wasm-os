@@ -7,6 +7,9 @@ pub mod loader;
 #[path = "../../kernel/src/wasm/interp.rs"]
 pub mod interp;
 
+#[path = "../../kernel/src/wasm/opcode.rs"]
+pub mod opcode;
+
 use std::cell::RefCell;
 use loader::{load, find_export, read_memory_min_pages, read_u32_leb128};
 pub use interp::{Interpreter, InterpError, HostFn, MAX_FUNCS, read_i32_leb128};

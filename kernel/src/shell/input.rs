@@ -30,7 +30,7 @@ impl ShellState {
 /// available (so the caller knows not to idle).
 pub fn poll_once(state: &mut ShellState) -> bool {
     if let Some(command) = state.editor.get_input() {
-        crate::print!("\r\x1B[0K\n");  // wipe prompt line, move to next line for output
+        crate::print!("\r\n");  // wipe prompt line, move to next line for output
         crate::shell::run_command(&command);
         state.editor.request_render();  // always redraw prompt once command finishes
     }

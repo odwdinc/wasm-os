@@ -42,7 +42,7 @@ ms/frame drops measurably (target: <600ms). Opcode counter validates throughput 
 **Goal:** First JIT'd WASM functions execute correctly. Prove the pipeline end-to-end.
 
 ### Deliverables:
-* [ ] **Commit to calling convention** — use the x86 stack as the WASM operand stack (each WASM i64 value is pushed/popped via `push`/`pop` on RSP). Callee-saved registers hold pointers that persist across the whole function:
+* [x] **Commit to calling convention** — use the x86 stack as the WASM operand stack (each WASM i64 value is pushed/popped via `push`/`pop` on RSP). Callee-saved registers hold pointers that persist across the whole function:
   ```
   R13 = locals base  (*mut i64, frame-allocated on x86 stack at prologue)
   R14 = globals base (*mut i64, passed in as arg)
@@ -54,7 +54,7 @@ ms/frame drops measurably (target: <600ms). Opcode counter validates throughput 
   ```
   Locals allocated by `sub rsp, locals_count*8` in prologue; freed in epilogue.
 
-* [ ] **Extend `jit/emit.rs`** with helpers needed before the compilation pass can work:
+* [x] **Extend `jit/emit.rs`** with helpers needed before the compilation pass can work:
   - `emit_imul_rr(dst, src)` — `imul r64, r64`
   - `emit_sar_rcx(reg)` — `sar reg, cl` (arithmetic right shift for `i32.shr_s`)
   - `emit_shl_rcx(reg)` / `emit_shr_rcx(reg)` — shift by CL
@@ -64,7 +64,7 @@ ms/frame drops measurably (target: <600ms). Opcode counter validates throughput 
   - `emit_mem_load_u8/u16/u32/u64(dst, base_reg, offset_reg)` — bounds-checked load patterns
   - `emit_mem_store_u8/u16/u32/u64(src, base_reg, offset_reg)` — bounds-checked store patterns
 
-* [ ] **JIT compilation pass** — `fn jit_compile_body(body: &[u8], locals_count: usize, buf: &mut CodeBuf) -> bool` that walks WASM bytecode and emits x86-64 for:
+* [x] **JIT compilation pass** — `fn jit_compile_body(body: &[u8], locals_count: usize, buf: &mut CodeBuf) -> bool` that walks WASM bytecode and emits x86-64 for:
   - `i32.const` / `i64.const` → `push imm64`
   - `local.get N` / `local.set N` / `local.tee N` → load/store `[R13 + N*8]`
   - `i32.add/sub/mul/and/or/xor/shl/shr_u/shr_s/rotl/rotr`
@@ -72,11 +72,11 @@ ms/frame drops measurably (target: <600ms). Opcode counter validates throughput 
   - `return` → restore RSP (unwind locals), emit epilogue + `ret`
   - Returns `false` for any unrecognised opcode → caller falls back to interpreter for that function
 
-* [ ] **JIT table in engine** — `[Option<unsafe fn(*mut u8, *mut i64) -> i32>; MAX_FUNCS]` per instance. Populated at spawn time for functions that compile successfully. Miss → interpreter handles that function.
+* [x] **JIT table in engine** — `[Option<unsafe fn(*mut u8, *mut i64) -> i32>; MAX_FUNCS]` per instance. Populated at spawn time for functions that compile successfully. Miss → interpreter handles that function.
 
-* [ ] **Call from interpreter into JIT** — when `OP_CALL` targets a JIT-compiled function index, invoke the native pointer directly instead of pushing an interpreter frame. Pass `self.mem.as_mut_ptr()` and `self.globals.as_mut_ptr()`.
+* [x] **Call from interpreter into JIT** — when `OP_CALL` targets a JIT-compiled function index, invoke the native pointer directly instead of pushing an interpreter frame. Pass `self.mem.as_mut_ptr()` and `self.globals.as_mut_ptr()`.
 
-* [ ] **Shadow-mode correctness check** — gated by `#[cfg(feature = "jit_shadow")]`: run the function in both JIT and interpreter, compare vstack top after return, panic/print on mismatch. Enable during Sprint 3–4 development; disable for production.
+* [x] **Shadow-mode correctness check** — gated by `#[cfg(feature = "jit_shadow")]`: run the function in both JIT and interpreter, compare vstack top after return, panic/print on mismatch. Enable during Sprint 3–4 development; disable for production.
 
 ### Success:
 `fib.wasm` with N=30 runs 10–20x faster through JIT path vs interpreter (measured with RDTSC timer from Sprint 1). NES still interpreter-only at this stage (control flow not yet JIT'd).

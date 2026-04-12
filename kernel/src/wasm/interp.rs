@@ -18,122 +18,13 @@
 //!   execution paused.
 
 use super::loader::{Module, read_u32_leb128};
+use super::opcode;
 
-// ── Opcodes ───────────────────────────────────────────────────────────────────
-const OP_UNREACHABLE:   u8 = 0x00;
-const OP_NOP:           u8 = 0x01;
-const OP_BLOCK:         u8 = 0x02;
-const OP_LOOP:          u8 = 0x03;
-const OP_IF:            u8 = 0x04;
-const OP_ELSE:          u8 = 0x05;
-const OP_END:           u8 = 0x0B;
-const OP_BR:            u8 = 0x0C;
-const OP_BR_IF:         u8 = 0x0D;
-const OP_BR_TABLE:      u8 = 0x0E;
-const OP_RETURN:        u8 = 0x0F;
-const OP_CALL:          u8 = 0x10;
-const OP_CALL_INDIRECT: u8 = 0x11;
-const OP_DROP:          u8 = 0x1A;
-const OP_SELECT:        u8 = 0x1B;
-const OP_LOCAL_GET:     u8 = 0x20;
-const OP_LOCAL_SET:     u8 = 0x21;
-const OP_LOCAL_TEE:     u8 = 0x22;
-const OP_GLOBAL_GET:    u8 = 0x23;
-const OP_GLOBAL_SET:    u8 = 0x24;
-const OP_I32_LOAD:      u8 = 0x28;
-const OP_I32_LOAD8_U:   u8 = 0x2D;
-const OP_I32_STORE:     u8 = 0x36;
-const OP_I32_STORE8:    u8 = 0x3A;
-const OP_MEMORY_SIZE:   u8 = 0x3F;
-const OP_MEMORY_GROW:   u8 = 0x40;
-const OP_I32_CONST:     u8 = 0x41;
-const OP_I32_EQZ:       u8 = 0x45;
-const OP_I32_EQ:        u8 = 0x46;
-const OP_I32_NE:        u8 = 0x47;
-const OP_I32_LT_S:      u8 = 0x48;
-const OP_I32_LT_U:      u8 = 0x49;
-const OP_I32_GT_S:      u8 = 0x4A;
-const OP_I32_GT_U:      u8 = 0x4B;
-const OP_I32_LE_S:      u8 = 0x4C;
-const OP_I32_LE_U:      u8 = 0x4D;
-const OP_I32_GE_S:      u8 = 0x4E;
-const OP_I32_GE_U:      u8 = 0x4F;
-const OP_I32_CLZ:       u8 = 0x67;
-const OP_I32_CTZ:       u8 = 0x68;
-const OP_I32_POPCNT:    u8 = 0x69;
-const OP_I32_ADD:       u8 = 0x6A;
-const OP_I32_SUB:       u8 = 0x6B;
-const OP_I32_MUL:       u8 = 0x6C;
-const OP_I32_DIV_S:     u8 = 0x6D;
-const OP_I32_DIV_U:     u8 = 0x6E;
-const OP_I32_REM_S:     u8 = 0x6F;
-const OP_I32_REM_U:     u8 = 0x70;
-const OP_I32_AND:       u8 = 0x71;
-const OP_I32_OR:        u8 = 0x72;
-const OP_I32_XOR:       u8 = 0x73;
-const OP_I32_SHL:       u8 = 0x74;
-const OP_I32_SHR_S:     u8 = 0x75;
-const OP_I32_SHR_U:     u8 = 0x76;
-const OP_I32_ROTL:      u8 = 0x77;
-const OP_I32_ROTR:      u8 = 0x78;
-const OP_I64_CONST:     u8 = 0x42;
-const OP_I64_EQZ:       u8 = 0x50;
-const OP_I64_EQ:        u8 = 0x51;
-const OP_I64_NE:        u8 = 0x52;
-const OP_I64_LT_S:      u8 = 0x53;
-const OP_I64_LT_U:      u8 = 0x54;
-const OP_I64_GT_S:      u8 = 0x55;
-const OP_I64_GT_U:      u8 = 0x56;
-const OP_I64_LE_S:      u8 = 0x57;
-const OP_I64_LE_U:      u8 = 0x58;
-const OP_I64_GE_S:      u8 = 0x59;
-const OP_I64_GE_U:      u8 = 0x5A;
-const OP_I64_LOAD:      u8 = 0x29;
-const OP_I64_STORE:     u8 = 0x37;
-const OP_I64_CLZ:       u8 = 0x79;
-const OP_I64_CTZ:       u8 = 0x7A;
-const OP_I64_POPCNT:    u8 = 0x7B;
-const OP_I64_ADD:       u8 = 0x7C;
-const OP_I64_SUB:       u8 = 0x7D;
-const OP_I64_MUL:       u8 = 0x7E;
-const OP_I64_AND:       u8 = 0x83;
-const OP_I64_OR:        u8 = 0x84;
-const OP_I64_XOR:       u8 = 0x85;
-const OP_I64_SHL:       u8 = 0x86;
-const OP_I64_SHR_S:     u8 = 0x87;
-const OP_I64_SHR_U:     u8 = 0x88;
-const OP_I64_ROTL:      u8 = 0x89;
-const OP_I64_ROTR:      u8 = 0x8A;
-// narrow loads
-const OP_I32_LOAD8_S:  u8 = 0x2C;
-const OP_I32_LOAD16_S: u8 = 0x2E;
-const OP_I32_LOAD16_U: u8 = 0x2F;
-const OP_I64_LOAD8_S:  u8 = 0x30;
-const OP_I64_LOAD8_U:  u8 = 0x31;
-const OP_I64_LOAD16_S: u8 = 0x32;
-const OP_I64_LOAD16_U: u8 = 0x33;
-const OP_I64_LOAD32_S: u8 = 0x34;
-const OP_I64_LOAD32_U: u8 = 0x35;
-// narrow stores
-const OP_I32_STORE16: u8 = 0x3B;
-const OP_I64_STORE8:  u8 = 0x3C;
-const OP_I64_STORE16: u8 = 0x3D;
-const OP_I64_STORE32: u8 = 0x3E;
-// i64 div/rem
-const OP_I64_DIV_S: u8 = 0x7F;
-const OP_I64_DIV_U: u8 = 0x80;
-const OP_I64_REM_S: u8 = 0x81;
-const OP_I64_REM_U: u8 = 0x82;
-// type conversions
-const OP_I32_WRAP_I64:     u8 = 0xA7;
-const OP_I64_EXTEND_I32_S: u8 = 0xAC;
-const OP_I64_EXTEND_I32_U: u8 = 0xAD;
-// sign-extension
-const OP_I32_EXTEND8_S:  u8 = 0xC0;
-const OP_I32_EXTEND16_S: u8 = 0xC1;
-const OP_I64_EXTEND8_S:  u8 = 0xC2;
-const OP_I64_EXTEND16_S: u8 = 0xC3;
-const OP_I64_EXTEND32_S: u8 = 0xC4;
+/// JIT function pointer type matching the calling convention in `jit/emit.rs`.
+///   RDI = mem base, RSI = globals base, RDX = locals base → returns i64.
+pub type JitFn = unsafe extern "C" fn(*mut u8, *mut i64, *mut i64) -> i64;
+
+const NONE_JIT: Option<JitFn> = None;
 
 // ── Capacity limits ───────────────────────────────────────────────────────────
 
@@ -142,7 +33,7 @@ pub const MAX_FUNCS:      usize = 512;
 /// Maximum number of type-section entries (function signatures).
 pub const MAX_TYPES:      usize = 128;
 /// Maximum locals per function frame (parameters + declared locals).
-pub const MAX_LOCALS:     usize = 32;
+pub const MAX_LOCALS:     usize = 64;
 /// Maximum number of global variables.
 pub const MAX_GLOBALS:    usize = 64;
 /// Maximum number of function-table entries (for `call_indirect`).
@@ -392,6 +283,10 @@ pub struct Interpreter<'a> {
     pub mem:           &'a mut [u8],
     pub host_fns:      [Option<HostFn>; MAX_FUNCS],
 
+    /// JIT-compiled function pointers, indexed by absolute function index.
+    /// `None` = interpreter fallback.  Populated by [`Interpreter::compile_jit`].
+    pub jit_fns: [Option<JitFn>; MAX_FUNCS],
+
     /// Pre-computed block/loop/if → end_pc hash table (open-addressing).
     /// Populated once during `new()`; read-only during execution.
     jump_table: [JumpSlot; JUMP_SLOTS],
@@ -403,6 +298,12 @@ pub struct Interpreter<'a> {
 
     /// Set by host functions; checked at the top of each dispatch iteration.
     pub yield_requested: bool,
+
+    /// Shadow-mode stop depth: `run()` exits when `fdepth` drops to this value.
+    /// Normally 0 (run until all frames complete). Set by `run_shadow` so the
+    /// interpreter stops after the shadow callee returns, without continuing
+    /// the caller's frame.
+    shadow_stop_fdepth: usize,
 }
 
 impl<'a> Interpreter<'a> {
@@ -480,10 +381,12 @@ impl<'a> Interpreter<'a> {
 
             mem,
             host_fns,
+            jit_fns: [NONE_JIT; MAX_FUNCS],
             jump_table,
             current_pages: initial_pages,
             max_pages,
             yield_requested: false,
+            shadow_stop_fdepth: 0,
         })
     }
 
@@ -527,6 +430,109 @@ impl<'a> Interpreter<'a> {
         self.fdepth          = 0;
         self.ctrl_depth      = 0;
         self.yield_requested = false;
+    }
+
+    /// JIT-compile every function body this interpreter knows about.
+    ///
+    /// For each defined function, tries to JIT-compile the body via
+    /// [`crate::jit::compile::jit_compile_body`].  On success, stores the
+    /// native function pointer in [`Self::jit_fns`] indexed by the absolute
+    /// function index (`import_count + body_index`).  Functions that fail to
+    /// compile (unsupported opcodes, control flow, etc.) are left as `None`
+    /// so the interpreter handles them as a fallback.
+    ///
+    /// Allocates code from the global [`crate::jit::JIT_BUF`].  Safe to call
+    /// multiple times but will exhaust the JIT buffer on repeated calls.
+    pub fn compile_jit(&mut self) {
+        #[cfg(feature = "kernel_jit")]
+        {
+            use crate::jit::compile::jit_compile_body;
+            use crate::jit::emit::CodeBuf;
+
+            // Compile into a stack-allocated scratch buffer, then copy only the
+            // used bytes into the JIT pool to avoid wasting space on failures.
+            const MAX_FN_BYTES: usize = 4096;
+            let mut tmp = [0u8; MAX_FN_BYTES];
+
+            for bi in 0..self.body_count {
+                let abs_idx  = self.import_count + bi;
+                let body     = self.bodies[bi];
+                let type_idx = self.func_type_indices[bi];
+
+                let n_params  = if type_idx < self.type_count { self.type_param_counts[type_idx]  } else { 0 };
+                let n_results = if type_idx < self.type_count { self.type_result_counts[type_idx] } else { 0 };
+                let total_locals = n_params + self.local_counts[bi];
+
+                tmp[..].fill(0);
+                let mut buf = CodeBuf::new(&mut tmp);
+
+                if !jit_compile_body(body, total_locals, n_results, &mut buf) {
+                    continue; // unsupported opcode — interpreter fallback
+                }
+
+                let code_size = buf.len();
+                if code_size == 0 { continue; }
+
+                let Some(dst) = crate::jit::jit_alloc(code_size) else {
+                    crate::println!("[jit] buffer exhausted at func {}", abs_idx);
+                    break;
+                };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(tmp.as_ptr(), dst, code_size);
+                    let fn_ptr: JitFn = core::mem::transmute(dst);
+                    self.jit_fns[abs_idx] = Some(fn_ptr);
+                }
+            }
+
+            let compiled = self.jit_fns[self.import_count..]
+                .iter().filter(|f| f.is_some()).count();
+            crate::println!("[jit] compiled {}/{} functions ({} bytes used)",
+                compiled, self.body_count, crate::jit::jit_used());
+        }
+    }
+
+    /// Shadow-mode helper: run `callee_body` through the interpreter and return
+    /// its result for comparison with the JIT result.
+    ///
+    /// Pushes `params` onto the value stack, executes the function, and pops
+    /// the result.  Any interpreter error returns `None` (shadow check skipped).
+    ///
+    /// Only compiled in when the `jit_shadow` feature is enabled.
+    #[cfg(feature = "jit_shadow")]
+    fn run_shadow(&mut self, callee_body: usize, params: &[i64], n_results: usize) -> Option<i64> {
+        // Stop run() as soon as the callee's frame exits — do not continue the
+        // caller's frame.  We do this by setting shadow_stop_fdepth to the
+        // current depth; run() exits when fdepth drops back to that value.
+        let saved_stop  = self.shadow_stop_fdepth;
+        let saved_vsp   = self.vsp;
+        self.shadow_stop_fdepth = self.fdepth;
+
+        for &p in params {
+            if self.v_push(p).is_err() {
+                self.shadow_stop_fdepth = saved_stop;
+                self.vsp = saved_vsp;
+                return None;
+            }
+        }
+        if self.push_frame(callee_body).is_err() {
+            self.shadow_stop_fdepth = saved_stop;
+            self.vsp = saved_vsp;
+            return None;
+        }
+        let ok = self.run().is_ok();
+        self.shadow_stop_fdepth = saved_stop;
+        if !ok {
+            self.vsp = saved_vsp;
+            return None;
+        }
+        if n_results > 0 && self.vsp > saved_vsp {
+            let result = self.vstack[self.vsp - 1];
+            self.vsp -= 1; // consume shadow result, restoring vsp to saved_vsp
+            Some(result)
+        } else {
+            self.vsp = saved_vsp;
+            Some(0)
+        }
     }
 
     #[allow(dead_code)]
@@ -617,7 +623,7 @@ impl<'a> Interpreter<'a> {
         // Pre-compute active memory bytes once; updated only on memory.grow.
         let mut active_mem = self.current_pages as usize * PAGE_SIZE;
 
-        'outer: while self.fdepth > 0 {
+        'outer: while self.fdepth > self.shadow_stop_fdepth {
             if self.yield_requested {
                 self.yield_requested = false;
                 return Err(InterpError::Yielded);
@@ -644,11 +650,11 @@ impl<'a> Interpreter<'a> {
             match opcode {
 
                 // ── nop / unreachable ─────────────────────────────────────────
-                OP_NOP => {}
-                OP_UNREACHABLE => return Err(InterpError::Unreachable),
+                opcode::OP_NOP => {}
+                opcode::OP_UNREACHABLE => return Err(InterpError::Unreachable),
 
                 // ── block <blocktype> ─────────────────────────────────────────
-                OP_BLOCK => {
+                opcode::OP_BLOCK => {
                     // Skip blocktype (single byte in MVP).
                     let pc_body = pc + 1;
                     pc = pc_body;
@@ -662,7 +668,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── loop <blocktype> ─────────────────────────────────────────
-                OP_LOOP => {
+                opcode::OP_LOOP => {
                     let pc_body = pc + 1;
                     pc = pc_body;
                     let (end_pc, _) = self.jump_lookup(body_idx, pc_body)
@@ -675,7 +681,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── if <blocktype> ────────────────────────────────────────────
-                OP_IF => {
+                opcode::OP_IF => {
                     let pc_body = pc + 1; // after blocktype
                     pc = pc_body;
                     let (end_pc, else_pc) = self.jump_lookup(body_idx, pc_body)
@@ -702,7 +708,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── else ──────────────────────────────────────────────────────
-                OP_ELSE => {
+                opcode::OP_ELSE => {
                     // Reached end of then-branch; jump past the else block.
                     let end_pc = self.ctrl[self.ctrl_depth - 1].end_pc;
                     self.ctrl_depth -= 1; // pop the if ctrl frame
@@ -710,7 +716,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── end ───────────────────────────────────────────────────────
-                OP_END => {
+                opcode::OP_END => {
                     if self.ctrl_depth > self.frames[fi].ctrl_base {
                         // End of a block/loop/if.
                         self.ctrl_depth -= 1;
@@ -722,7 +728,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── br <labelidx> ─────────────────────────────────────────────
-                OP_BR => {
+                opcode::OP_BR => {
                     let (n, consumed) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -732,7 +738,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── br_if <labelidx> ──────────────────────────────────────────
-                OP_BR_IF => {
+                opcode::OP_BR_IF => {
                     let (n, consumed) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -746,7 +752,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── br_table <count> <labels…> <default> ──────────────────────
-                OP_BR_TABLE => {
+                opcode::OP_BR_TABLE => {
                     let (count, n) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     let i = self.v_pop()? as u32;
@@ -767,14 +773,14 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── return ────────────────────────────────────────────────────
-                OP_RETURN => {
+                opcode::OP_RETURN => {
                     do_return(self);
                     continue 'outer;
                 }
 
                 // ── drop / select ─────────────────────────────────────────────
-                OP_DROP => { self.v_pop()?; }
-                OP_SELECT => {
+                opcode::OP_DROP => { self.v_pop()?; }
+                opcode::OP_SELECT => {
                     let cond = self.v_pop()?;
                     let b    = self.v_pop()?;
                     let a    = self.v_pop()?;
@@ -782,7 +788,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── local.get/set/tee ─────────────────────────────────────────
-                OP_LOCAL_GET => {
+                opcode::OP_LOCAL_GET => {
                     let (idx, consumed) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -791,7 +797,7 @@ impl<'a> Interpreter<'a> {
                     let val = self.frames[fi].locals[idx];
                     self.v_push(val)?;
                 }
-                OP_LOCAL_SET => {
+                opcode::OP_LOCAL_SET => {
                     let (idx, consumed) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -800,7 +806,7 @@ impl<'a> Interpreter<'a> {
                     let val = self.v_pop()?;
                     self.frames[fi].locals[idx] = val;
                 }
-                OP_LOCAL_TEE => {
+                opcode::OP_LOCAL_TEE => {
                     let (idx, consumed) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -812,7 +818,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── global.get / global.set ───────────────────────────────────
-                OP_GLOBAL_GET => {
+                opcode::OP_GLOBAL_GET => {
                     let (idx, consumed) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -821,7 +827,7 @@ impl<'a> Interpreter<'a> {
                     let val = self.globals[idx];
                     self.v_push(val)?;
                 }
-                OP_GLOBAL_SET => {
+                opcode::OP_GLOBAL_SET => {
                     let (idx, consumed) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -832,7 +838,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── memory loads ──────────────────────────────────────────────
-                OP_I32_LOAD => {
+                opcode::OP_I32_LOAD => {
                     let (offset, consumed) = read_memarg(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -844,7 +850,7 @@ impl<'a> Interpreter<'a> {
                     ]);
                     self.v_push(val as i64)?;
                 }
-                OP_I32_LOAD8_U => {
+                opcode::OP_I32_LOAD8_U => {
                     let (offset, consumed) = read_memarg(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -853,7 +859,7 @@ impl<'a> Interpreter<'a> {
                     if ea >= active_mem { return Err(InterpError::MemOutOfBounds); }
                     self.v_push(self.mem[ea] as i64)?;
                 }
-                OP_I64_LOAD => {
+                opcode::OP_I64_LOAD => {
                     let (offset, consumed) = read_memarg(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -891,7 +897,7 @@ impl<'a> Interpreter<'a> {
                     self.v_push(bits as i64)?;
                 }
                 // narrow loads
-                OP_I32_LOAD8_S => {
+                opcode::OP_I32_LOAD8_S => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
@@ -899,7 +905,7 @@ impl<'a> Interpreter<'a> {
                     if ea >= active_mem { return Err(InterpError::MemOutOfBounds); }
                     self.v_push(self.mem[ea] as i8 as i32 as i64)?;
                 }
-                OP_I32_LOAD16_S => {
+                opcode::OP_I32_LOAD16_S => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
@@ -908,7 +914,7 @@ impl<'a> Interpreter<'a> {
                     let v = i16::from_le_bytes([self.mem[ea], self.mem[ea+1]]);
                     self.v_push(v as i32 as i64)?;
                 }
-                OP_I32_LOAD16_U => {
+                opcode::OP_I32_LOAD16_U => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
@@ -917,7 +923,7 @@ impl<'a> Interpreter<'a> {
                     let v = u16::from_le_bytes([self.mem[ea], self.mem[ea+1]]);
                     self.v_push(v as i64)?;
                 }
-                OP_I64_LOAD8_S => {
+                opcode::OP_I64_LOAD8_S => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
@@ -925,7 +931,7 @@ impl<'a> Interpreter<'a> {
                     if ea >= active_mem { return Err(InterpError::MemOutOfBounds); }
                     self.v_push(self.mem[ea] as i8 as i64)?;
                 }
-                OP_I64_LOAD8_U => {
+                opcode::OP_I64_LOAD8_U => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
@@ -933,7 +939,7 @@ impl<'a> Interpreter<'a> {
                     if ea >= active_mem { return Err(InterpError::MemOutOfBounds); }
                     self.v_push(self.mem[ea] as i64)?;
                 }
-                OP_I64_LOAD16_S => {
+                opcode::OP_I64_LOAD16_S => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
@@ -942,7 +948,7 @@ impl<'a> Interpreter<'a> {
                     let v = i16::from_le_bytes([self.mem[ea], self.mem[ea+1]]);
                     self.v_push(v as i64)?;
                 }
-                OP_I64_LOAD16_U => {
+                opcode::OP_I64_LOAD16_U => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
@@ -951,7 +957,7 @@ impl<'a> Interpreter<'a> {
                     let v = u16::from_le_bytes([self.mem[ea], self.mem[ea+1]]);
                     self.v_push(v as i64)?;
                 }
-                OP_I64_LOAD32_S => {
+                opcode::OP_I64_LOAD32_S => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
@@ -960,7 +966,7 @@ impl<'a> Interpreter<'a> {
                     let v = i32::from_le_bytes([self.mem[ea], self.mem[ea+1], self.mem[ea+2], self.mem[ea+3]]);
                     self.v_push(v as i64)?;
                 }
-                OP_I64_LOAD32_U => {
+                opcode::OP_I64_LOAD32_U => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let addr = self.v_pop()? as u32 as usize;
@@ -971,7 +977,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── memory stores ─────────────────────────────────────────────
-                OP_I32_STORE => {
+                opcode::OP_I32_STORE => {
                     let (offset, consumed) = read_memarg(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -981,7 +987,7 @@ impl<'a> Interpreter<'a> {
                     if ea + 4 > active_mem { return Err(InterpError::MemOutOfBounds); }
                     self.mem[ea..ea+4].copy_from_slice(&val.to_le_bytes());
                 }
-                OP_I32_STORE8 => {
+                opcode::OP_I32_STORE8 => {
                     let (offset, consumed) = read_memarg(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -991,7 +997,7 @@ impl<'a> Interpreter<'a> {
                     if ea >= active_mem { return Err(InterpError::MemOutOfBounds); }
                     self.mem[ea] = val;
                 }
-                OP_I64_STORE => {
+                opcode::OP_I64_STORE => {
                     let (offset, consumed) = read_memarg(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -1022,7 +1028,7 @@ impl<'a> Interpreter<'a> {
                     self.mem[ea..ea+8].copy_from_slice(&val.to_le_bytes());
                 }
                 // narrow stores
-                OP_I32_STORE16 => {
+                opcode::OP_I32_STORE16 => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let val  = self.v_pop()? as u16;
@@ -1031,7 +1037,7 @@ impl<'a> Interpreter<'a> {
                     if ea + 2 > active_mem { return Err(InterpError::MemOutOfBounds); }
                     self.mem[ea..ea+2].copy_from_slice(&val.to_le_bytes());
                 }
-                OP_I64_STORE8 => {
+                opcode::OP_I64_STORE8 => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let val  = self.v_pop()? as u8;
@@ -1040,7 +1046,7 @@ impl<'a> Interpreter<'a> {
                     if ea >= active_mem { return Err(InterpError::MemOutOfBounds); }
                     self.mem[ea] = val;
                 }
-                OP_I64_STORE16 => {
+                opcode::OP_I64_STORE16 => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let val  = self.v_pop()? as u16;
@@ -1049,7 +1055,7 @@ impl<'a> Interpreter<'a> {
                     if ea + 2 > active_mem { return Err(InterpError::MemOutOfBounds); }
                     self.mem[ea..ea+2].copy_from_slice(&val.to_le_bytes());
                 }
-                OP_I64_STORE32 => {
+                opcode::OP_I64_STORE32 => {
                     let (offset, consumed) = read_memarg(&body[pc..]).ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     let val  = self.v_pop()? as u32;
@@ -1060,11 +1066,11 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── memory.size / memory.grow ─────────────────────────────────
-                OP_MEMORY_SIZE => {
+                opcode::OP_MEMORY_SIZE => {
                     pc += 1; // skip reserved 0x00 byte
                     self.v_push(self.current_pages as i64)?;
                 }
-                OP_MEMORY_GROW => {
+                opcode::OP_MEMORY_GROW => {
                     pc += 1; // skip reserved 0x00 byte
                     let delta = self.v_pop()? as u32;
                     let old   = self.current_pages;
@@ -1081,13 +1087,13 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── i32.const / i64.const ────────────────────────────────────
-                OP_I32_CONST => {
+                opcode::OP_I32_CONST => {
                     let (val, consumed) = read_i32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
                     self.v_push(val as i64)?;
                 }
-                OP_I64_CONST => {
+                opcode::OP_I64_CONST => {
                     let (val, consumed) = read_i64_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -1095,115 +1101,115 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── i32 comparisons ───────────────────────────────────────────
-                OP_I32_EQZ  => { let a = self.v_pop()? as i32; self.v_push(if a == 0 { 1 } else { 0 })?; }
-                OP_I32_EQ   => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a == b { 1 } else { 0 })?; }
-                OP_I32_NE   => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a != b { 1 } else { 0 })?; }
-                OP_I32_LT_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a <  b { 1 } else { 0 })?; }
-                OP_I32_LT_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a <  b { 1 } else { 0 })?; }
-                OP_I32_GT_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a >  b { 1 } else { 0 })?; }
-                OP_I32_GT_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a >  b { 1 } else { 0 })?; }
-                OP_I32_LE_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a <= b { 1 } else { 0 })?; }
-                OP_I32_LE_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a <= b { 1 } else { 0 })?; }
-                OP_I32_GE_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a >= b { 1 } else { 0 })?; }
-                OP_I32_GE_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a >= b { 1 } else { 0 })?; }
+                opcode::OP_I32_EQZ  => { let a = self.v_pop()? as i32; self.v_push(if a == 0 { 1 } else { 0 })?; }
+                opcode::OP_I32_EQ   => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a == b { 1 } else { 0 })?; }
+                opcode::OP_I32_NE   => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a != b { 1 } else { 0 })?; }
+                opcode::OP_I32_LT_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a <  b { 1 } else { 0 })?; }
+                opcode::OP_I32_LT_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a <  b { 1 } else { 0 })?; }
+                opcode::OP_I32_GT_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a >  b { 1 } else { 0 })?; }
+                opcode::OP_I32_GT_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a >  b { 1 } else { 0 })?; }
+                opcode::OP_I32_LE_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a <= b { 1 } else { 0 })?; }
+                opcode::OP_I32_LE_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a <= b { 1 } else { 0 })?; }
+                opcode::OP_I32_GE_S => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(if a >= b { 1 } else { 0 })?; }
+                opcode::OP_I32_GE_U => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(if a >= b { 1 } else { 0 })?; }
 
                 // ── i64 comparisons ───────────────────────────────────────────
-                OP_I64_EQZ  => { let a = self.v_pop()?; self.v_push(if a == 0 { 1 } else { 0 })?; }
-                OP_I64_EQ   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a == b { 1 } else { 0 })?; }
-                OP_I64_NE   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a != b { 1 } else { 0 })?; }
-                OP_I64_LT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <  b { 1 } else { 0 })?; }
-                OP_I64_LT_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a <  b { 1 } else { 0 })?; }
-                OP_I64_GT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >  b { 1 } else { 0 })?; }
-                OP_I64_GT_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a >  b { 1 } else { 0 })?; }
-                OP_I64_LE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <= b { 1 } else { 0 })?; }
-                OP_I64_LE_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a <= b { 1 } else { 0 })?; }
-                OP_I64_GE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >= b { 1 } else { 0 })?; }
-                OP_I64_GE_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a >= b { 1 } else { 0 })?; }
+                opcode::OP_I64_EQZ  => { let a = self.v_pop()?; self.v_push(if a == 0 { 1 } else { 0 })?; }
+                opcode::OP_I64_EQ   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a == b { 1 } else { 0 })?; }
+                opcode::OP_I64_NE   => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a != b { 1 } else { 0 })?; }
+                opcode::OP_I64_LT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <  b { 1 } else { 0 })?; }
+                opcode::OP_I64_LT_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a <  b { 1 } else { 0 })?; }
+                opcode::OP_I64_GT_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >  b { 1 } else { 0 })?; }
+                opcode::OP_I64_GT_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a >  b { 1 } else { 0 })?; }
+                opcode::OP_I64_LE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a <= b { 1 } else { 0 })?; }
+                opcode::OP_I64_LE_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a <= b { 1 } else { 0 })?; }
+                opcode::OP_I64_GE_S => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(if a >= b { 1 } else { 0 })?; }
+                opcode::OP_I64_GE_U => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(if a >= b { 1 } else { 0 })?; }
 
                 // ── i32 arithmetic ────────────────────────────────────────────
-                OP_I32_CLZ    => { let a = self.v_pop()? as i32; self.v_push((a as u32).leading_zeros() as i64)?; }
-                OP_I32_CTZ    => { let a = self.v_pop()? as i32; self.v_push((a as u32).trailing_zeros() as i64)?; }
-                OP_I32_POPCNT => { let a = self.v_pop()? as i32; self.v_push((a as u32).count_ones() as i64)?; }
-                OP_I32_ADD    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_add(b) as i64)?; }
-                OP_I32_SUB    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_sub(b) as i64)?; }
-                OP_I32_MUL    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_mul(b) as i64)?; }
-                OP_I32_DIV_S  => {
+                opcode::OP_I32_CLZ    => { let a = self.v_pop()? as i32; self.v_push((a as u32).leading_zeros() as i64)?; }
+                opcode::OP_I32_CTZ    => { let a = self.v_pop()? as i32; self.v_push((a as u32).trailing_zeros() as i64)?; }
+                opcode::OP_I32_POPCNT => { let a = self.v_pop()? as i32; self.v_push((a as u32).count_ones() as i64)?; }
+                opcode::OP_I32_ADD    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_add(b) as i64)?; }
+                opcode::OP_I32_SUB    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_sub(b) as i64)?; }
+                opcode::OP_I32_MUL    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_mul(b) as i64)?; }
+                opcode::OP_I32_DIV_S  => {
                     let b = self.v_pop()? as i32; let a = self.v_pop()? as i32;
                     if b == 0 { return Err(InterpError::DivisionByZero); }
                     self.v_push(a.wrapping_div(b) as i64)?;
                 }
-                OP_I32_DIV_U  => {
+                opcode::OP_I32_DIV_U  => {
                     let b = self.v_pop()? as u32; let a = self.v_pop()? as u32;
                     if b == 0 { return Err(InterpError::DivisionByZero); }
                     self.v_push((a / b) as i64)?;
                 }
-                OP_I32_REM_S  => {
+                opcode::OP_I32_REM_S  => {
                     let b = self.v_pop()? as i32; let a = self.v_pop()? as i32;
                     if b == 0 { return Err(InterpError::DivisionByZero); }
                     self.v_push(a.wrapping_rem(b) as i64)?;
                 }
-                OP_I32_REM_U  => {
+                opcode::OP_I32_REM_U  => {
                     let b = self.v_pop()? as u32; let a = self.v_pop()? as u32;
                     if b == 0 { return Err(InterpError::DivisionByZero); }
                     self.v_push((a % b) as i64)?;
                 }
-                OP_I32_AND    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push((a & b) as i64)?; }
-                OP_I32_OR     => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push((a | b) as i64)?; }
-                OP_I32_XOR    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push((a ^ b) as i64)?; }
-                OP_I32_SHL    => { let b = self.v_pop()? as u32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_shl(b & 31) as i64)?; }
-                OP_I32_SHR_S  => { let b = self.v_pop()? as u32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_shr(b & 31) as i64)?; }
-                OP_I32_SHR_U  => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(a.wrapping_shr(b & 31) as i64)?; }
-                OP_I32_ROTL   => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(a.rotate_left(b & 31) as i32 as i64)?; }
-                OP_I32_ROTR   => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(a.rotate_right(b & 31) as i32 as i64)?; }
+                opcode::OP_I32_AND    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push((a & b) as i64)?; }
+                opcode::OP_I32_OR     => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push((a | b) as i64)?; }
+                opcode::OP_I32_XOR    => { let b = self.v_pop()? as i32; let a = self.v_pop()? as i32; self.v_push((a ^ b) as i64)?; }
+                opcode::OP_I32_SHL    => { let b = self.v_pop()? as u32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_shl(b & 31) as i64)?; }
+                opcode::OP_I32_SHR_S  => { let b = self.v_pop()? as u32; let a = self.v_pop()? as i32; self.v_push(a.wrapping_shr(b & 31) as i64)?; }
+                opcode::OP_I32_SHR_U  => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(a.wrapping_shr(b & 31) as i64)?; }
+                opcode::OP_I32_ROTL   => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(a.rotate_left(b & 31) as i32 as i64)?; }
+                opcode::OP_I32_ROTR   => { let b = self.v_pop()? as u32; let a = self.v_pop()? as u32; self.v_push(a.rotate_right(b & 31) as i32 as i64)?; }
 
                 // ── i64 arithmetic ────────────────────────────────────────────
-                OP_I64_CLZ    => { let a = self.v_pop()?; self.v_push((a as u64).leading_zeros() as i64)?; }
-                OP_I64_CTZ    => { let a = self.v_pop()?; self.v_push((a as u64).trailing_zeros() as i64)?; }
-                OP_I64_POPCNT => { let a = self.v_pop()?; self.v_push((a as u64).count_ones() as i64)?; }
-                OP_I64_ADD    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_add(b))?; }
-                OP_I64_SUB    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_sub(b))?; }
-                OP_I64_MUL    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_mul(b))?; }
-                OP_I64_DIV_S  => {
+                opcode::OP_I64_CLZ    => { let a = self.v_pop()?; self.v_push((a as u64).leading_zeros() as i64)?; }
+                opcode::OP_I64_CTZ    => { let a = self.v_pop()?; self.v_push((a as u64).trailing_zeros() as i64)?; }
+                opcode::OP_I64_POPCNT => { let a = self.v_pop()?; self.v_push((a as u64).count_ones() as i64)?; }
+                opcode::OP_I64_ADD    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_add(b))?; }
+                opcode::OP_I64_SUB    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_sub(b))?; }
+                opcode::OP_I64_MUL    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a.wrapping_mul(b))?; }
+                opcode::OP_I64_DIV_S  => {
                     let b = self.v_pop()?; let a = self.v_pop()?;
                     if b == 0 { return Err(InterpError::DivisionByZero); }
                     if a == i64::MIN && b == -1 { return Err(InterpError::DivisionByZero); }
                     self.v_push(a.wrapping_div(b))?;
                 }
-                OP_I64_DIV_U  => {
+                opcode::OP_I64_DIV_U  => {
                     let b = self.v_pop()? as u64; let a = self.v_pop()? as u64;
                     if b == 0 { return Err(InterpError::DivisionByZero); }
                     self.v_push((a / b) as i64)?;
                 }
-                OP_I64_REM_S  => {
+                opcode::OP_I64_REM_S  => {
                     let b = self.v_pop()?; let a = self.v_pop()?;
                     if b == 0 { return Err(InterpError::DivisionByZero); }
                     self.v_push(a.wrapping_rem(b))?;
                 }
-                OP_I64_REM_U  => {
+                opcode::OP_I64_REM_U  => {
                     let b = self.v_pop()? as u64; let a = self.v_pop()? as u64;
                     if b == 0 { return Err(InterpError::DivisionByZero); }
                     self.v_push((a % b) as i64)?;
                 }
-                OP_I64_AND    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a & b)?; }
-                OP_I64_OR     => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a | b)?; }
-                OP_I64_XOR    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a ^ b)?; }
-                OP_I64_SHL    => { let b = self.v_pop()? as u64; let a = self.v_pop()?; self.v_push(a.wrapping_shl((b & 63) as u32))?; }
-                OP_I64_SHR_S  => { let b = self.v_pop()? as u64; let a = self.v_pop()?; self.v_push(a.wrapping_shr((b & 63) as u32))?; }
-                OP_I64_SHR_U  => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(a.wrapping_shr((b & 63) as u32) as i64)?; }
-                OP_I64_ROTL   => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(a.rotate_left((b & 63) as u32) as i64)?; }
-                OP_I64_ROTR   => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(a.rotate_right((b & 63) as u32) as i64)?; }
+                opcode::OP_I64_AND    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a & b)?; }
+                opcode::OP_I64_OR     => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a | b)?; }
+                opcode::OP_I64_XOR    => { let b = self.v_pop()?; let a = self.v_pop()?; self.v_push(a ^ b)?; }
+                opcode::OP_I64_SHL    => { let b = self.v_pop()? as u64; let a = self.v_pop()?; self.v_push(a.wrapping_shl((b & 63) as u32))?; }
+                opcode::OP_I64_SHR_S  => { let b = self.v_pop()? as u64; let a = self.v_pop()?; self.v_push(a.wrapping_shr((b & 63) as u32))?; }
+                opcode::OP_I64_SHR_U  => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(a.wrapping_shr((b & 63) as u32) as i64)?; }
+                opcode::OP_I64_ROTL   => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(a.rotate_left((b & 63) as u32) as i64)?; }
+                opcode::OP_I64_ROTR   => { let b = self.v_pop()? as u64; let a = self.v_pop()? as u64; self.v_push(a.rotate_right((b & 63) as u32) as i64)?; }
 
                 // ── type conversions ──────────────────────────────────────────
-                OP_I32_WRAP_I64     => { let a = self.v_pop()?; self.v_push(a as i32 as i64)?; }
-                OP_I64_EXTEND_I32_S => { let a = self.v_pop()? as i32; self.v_push(a as i64)?; }
-                OP_I64_EXTEND_I32_U => { let a = self.v_pop()? as u32; self.v_push(a as i64)?; }
+                opcode::OP_I32_WRAP_I64     => { let a = self.v_pop()?; self.v_push(a as i32 as i64)?; }
+                opcode::OP_I64_EXTEND_I32_S => { let a = self.v_pop()? as i32; self.v_push(a as i64)?; }
+                opcode::OP_I64_EXTEND_I32_U => { let a = self.v_pop()? as u32; self.v_push(a as i64)?; }
 
                 // ── sign-extension (0xC0–0xC4) ────────────────────────────────
-                OP_I32_EXTEND8_S  => { let v = self.v_pop()? as i32; self.v_push((v as i8)  as i32 as i64)?; }
-                OP_I32_EXTEND16_S => { let v = self.v_pop()? as i32; self.v_push((v as i16) as i32 as i64)?; }
-                OP_I64_EXTEND8_S  => { let v = self.v_pop()?;        self.v_push((v as i8)  as i64)?; }
-                OP_I64_EXTEND16_S => { let v = self.v_pop()?;        self.v_push((v as i16) as i64)?; }
-                OP_I64_EXTEND32_S => { let v = self.v_pop()?;        self.v_push((v as i32) as i64)?; }
+                opcode::OP_I32_EXTEND8_S  => { let v = self.v_pop()? as i32; self.v_push((v as i8)  as i32 as i64)?; }
+                opcode::OP_I32_EXTEND16_S => { let v = self.v_pop()? as i32; self.v_push((v as i16) as i32 as i64)?; }
+                opcode::OP_I64_EXTEND8_S  => { let v = self.v_pop()?;        self.v_push((v as i8)  as i64)?; }
+                opcode::OP_I64_EXTEND16_S => { let v = self.v_pop()?;        self.v_push((v as i16) as i64)?; }
+                opcode::OP_I64_EXTEND32_S => { let v = self.v_pop()?;        self.v_push((v as i32) as i64)?; }
 
                 // ── f32/f64 constants ─────────────────────────────────────────
                 0x43 => { // f32.const — 4-byte LE IEEE 754
@@ -1419,7 +1425,7 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // ── call ──────────────────────────────────────────────────────
-                OP_CALL => {
+                opcode::OP_CALL => {
                     let (callee, consumed) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     pc += consumed;
@@ -1434,13 +1440,62 @@ impl<'a> Interpreter<'a> {
                     } else {
                         let callee_body = callee - self.import_count;
                         if callee_body >= self.body_count { return Err(InterpError::FuncIndexOutOfRange); }
+
+                        // ── JIT fast path ──────────────────────────────────
+                        #[cfg(feature = "kernel_jit")]
+                        if let Some(jit_fn) = self.jit_fns[callee] {
+                            let type_idx  = self.all_func_types[callee];
+                            let n_params  = if type_idx < self.type_count { self.type_param_counts[type_idx]  } else { 0 };
+                            let n_results = if type_idx < self.type_count { self.type_result_counts[type_idx] } else { 0 };
+
+                            if self.vsp < n_params { return Err(InterpError::StackUnderflow); }
+
+                            // Pop params from interpreter vstack into locals buffer.
+                            // params[0] = first param (bottom), params[n-1] = last param (top).
+                            let mut locals = [0i64; MAX_LOCALS];
+                            for i in (0..n_params).rev() {
+                                locals[i] = self.v_pop()?;
+                            }
+
+                            let jit_result = unsafe {
+                                jit_fn(
+                                    self.mem.as_mut_ptr(),
+                                    self.globals.as_mut_ptr(),
+                                    locals.as_mut_ptr(),
+                                )
+                            };
+
+                            #[cfg(feature = "jit_shadow")]
+                            {
+                                // Shadow mode: also run the interpreter path and
+                                // compare results to catch JIT bugs.
+                                let shadow_result = self.run_shadow(
+                                    callee_body, &locals[..n_params], n_results
+                                );
+                                if let Some(sr) = shadow_result {
+                                    if n_results > 0 && sr != jit_result {
+                                        crate::println!(
+                                            "[jit_shadow] MISMATCH func {}: jit={} interp={}",
+                                            callee, jit_result, sr
+                                        );
+                                    }
+                                }
+                            }
+
+                            if n_results > 0 {
+                                self.v_push(jit_result)?;
+                            }
+                            continue 'outer;
+                        }
+
+                        // ── Interpreter fallback ───────────────────────────
                         self.push_frame(callee_body)?;
                     }
                     continue 'outer;
                 }
 
                 // ── call_indirect <type_idx> <table_idx> ──────────────────────
-                OP_CALL_INDIRECT => {
+                opcode::OP_CALL_INDIRECT => {
                     let (expected_type, n1) = read_u32_leb128(&body[pc..])
                         .ok_or(InterpError::MalformedCode)?;
                     let (_table_idx, n2) = read_u32_leb128(&body[pc + n1..])

@@ -291,8 +291,8 @@ pub extern "C" fn main() {
 
         let now = unsafe { uptime_ms() };
 
-        // Print timing stats once per 60 frames (~1 s at 60 fps).
-        if frame_counter - last_report_frame >= 60 {
+        // Print timing stats once per 30 frames (~500 ms at 30 fps).
+        if frame_counter - last_report_frame >= 30 {
             let elapsed_total = now - last_report_time;
             let frames_done   = frame_counter - last_report_frame;
             // ms per frame = elapsed / frames (integer approximation)
