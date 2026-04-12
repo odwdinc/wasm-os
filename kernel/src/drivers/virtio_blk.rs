@@ -397,7 +397,9 @@ impl BlockDevice for VirtioBlk {
 
             self.do_request(hdr_phys, data_phys, true)?;  // device writes data
 
-            buf.copy_from_slice(&REQ_DATA);
+            // SAFETY: single-core bare-metal — no concurrent access possible.
+            // addr_of! creates a shared reference without triggering the static warning.
+            buf.copy_from_slice(&*core::ptr::addr_of!(REQ_DATA));
         }
         Ok(())
     }
@@ -409,7 +411,8 @@ impl BlockDevice for VirtioBlk {
             REQ_HDR.reserved = 0;
             REQ_HDR.sector   = lba as u64;
 
-            REQ_DATA.copy_from_slice(buf);
+            // SAFETY: addr_of_mut! creates mutable reference without triggering static warning.
+            core::ptr::copy(buf.as_ptr(), core::ptr::addr_of_mut!(REQ_DATA) as *mut u8, BLOCK_SIZE);
 
             let hdr_phys  = virt_to_phys(core::ptr::addr_of!(REQ_HDR)  as usize);
             let data_phys = virt_to_phys(core::ptr::addr_of!(REQ_DATA) as usize);

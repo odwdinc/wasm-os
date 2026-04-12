@@ -23,15 +23,18 @@ pub struct BumpAllocator;
 unsafe impl GlobalAlloc for BumpAllocator {
     // SAFETY: single-core bare-metal — no concurrent access possible.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let current = HEAP_NEXT;
+        // SAFETY: single-core bare-metal — no concurrent access possible.
+        let current = unsafe { HEAP_NEXT };
         let align   = layout.align();
         let aligned = (current + align - 1) & !(align - 1);
         let end     = aligned + layout.size();
         if end > HEAP_SIZE {
             return core::ptr::null_mut(); // OOM
         }
-        HEAP_NEXT = end;
-        HEAP.0.as_mut_ptr().add(aligned)
+        // SAFETY: single-core bare-metal — no concurrent access possible.
+        unsafe { HEAP_NEXT = end };
+        // SAFETY: single-core bare-metal — no concurrent access possible.
+        unsafe { (core::ptr::addr_of_mut!(HEAP) as *mut u8).add(aligned) }
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {

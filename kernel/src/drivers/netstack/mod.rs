@@ -42,7 +42,14 @@ where
     F: FnOnce(&mut NetworkStack) -> R,
 {
     // SAFETY: single-core bare-metal — no concurrent access possible.
-    unsafe { NETWORK_STACK.as_mut().map(f) }
+    unsafe {
+        let ptr = core::ptr::addr_of_mut!(NETWORK_STACK);
+        if let Some(ref mut stack) = *ptr {
+            Some(f(stack))
+        } else {
+            None
+        }
+    }
 }
 
 pub struct NetworkStack {

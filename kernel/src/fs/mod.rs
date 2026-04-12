@@ -190,7 +190,7 @@ pub fn alloc_disk_slot(len: usize) -> Option<*mut u8> {
         let new_end = base + len;
         if new_end > FILE_BUF_SIZE { return None; }
         FILE_BUF_NEXT = new_end;
-        Some(FILE_BUF.0.as_mut_ptr().add(base))
+        Some((core::ptr::addr_of_mut!(FILE_BUF) as *mut u8).add(base))
     }
 }
 
