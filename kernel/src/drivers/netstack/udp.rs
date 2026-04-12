@@ -35,38 +35,6 @@ impl UdpSocket {
         self.recv_len = n;
     }
 
-    pub fn send(&mut self, data: &[u8], stack: &mut super::NetworkStack) -> Result<usize, ()> {
-        if self.remote_port == 0 || self.remote_ip.is_zero() {
-            return Err(());
-        }
-
-        let n = data.len().min(MAX_UDP_PAYLOAD);
-        let pkt = UdpPacket::new(self.local_port, self.remote_port, &data[..n]);
-        let pkt_bytes = pkt.to_bytes();
-        let ip_pkt = super::ip::Ipv4Packet::new(
-            stack.ip,
-            self.remote_ip,
-            super::ip::IP_PROTO_UDP,
-            &pkt_bytes,
-        );
-        let ip_bytes = ip_pkt.to_bytes();
-
-        if let Some(mac) = stack.arp.lookup(self.remote_ip.0) {
-            let mut frame_buf = [0u8; 1514];
-            let frame_len = super::ethernet::EthFrame::compose(
-                &mut frame_buf,
-                &mac,
-                &stack.mac,
-                super::ethernet::ETH_TYPE_IPV4,
-                &ip_bytes,
-            );
-            stack.net.net_send(&frame_buf[..frame_len])?;
-            Ok(n)
-        } else {
-            Err(())
-        }
-    }
-
     pub fn recv(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
         if self.recv_len == 0 {
             return Err(());

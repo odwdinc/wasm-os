@@ -6,8 +6,6 @@
 use crate::drivers::keyboard::{try_next_key, Key};
 use crate::shell::command_line_editor::CommandLineEditor;
 
-const MAX_LINE: usize = 256;
-
 // ── Shell state ───────────────────────────────────────────────────────────────
 
 /// Persistent state for the non-blocking shell line editor.

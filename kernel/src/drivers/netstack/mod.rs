@@ -41,13 +41,8 @@ pub fn with_network<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&mut NetworkStack) -> R,
 {
+    // SAFETY: single-core bare-metal — no concurrent access possible.
     unsafe { NETWORK_STACK.as_mut().map(f) }
-}
-
-#[derive(Clone, Copy)]
-pub struct NetworkHandle(usize);
-impl NetworkHandle {
-    pub fn as_usize(self) -> usize { self.0 }
 }
 
 pub struct NetworkStack {
@@ -133,7 +128,7 @@ impl NetworkStack {
 
     // ── ARP ──────────────────────────────────────────────────────────────────
 
-    fn handle_arp(&mut self, pkt: arp::ArpPacket<'_>) {
+    fn handle_arp(&mut self, pkt: arp::ArpPacket) {
         if pkt.operation == arp::ARP_OP_REQUEST && pkt.target_ip == self.ip.0 {
             let reply = arp::ArpPacket::new_reply(
                 self.ip.0,       // sender_ip: us
@@ -156,7 +151,6 @@ impl NetworkStack {
             sender_ip:  self.ip.0,
             target_mac: [0u8; 6],
             target_ip:  target_ip.0,
-            payload:    &[],
         };
         let broadcast = [0xFF_u8; 6];
         self.send_eth(&broadcast, ETH_TYPE_ARP, &req.to_bytes());

@@ -1,7 +1,6 @@
 // drivers/network/arp.rs — ARP handling
 
 use super::ethernet::ETH_MAC_LEN;
-use alloc::vec::Vec;
 
 
 pub const ARP_OP_REQUEST: u16 = 1;
@@ -53,17 +52,16 @@ impl ArpCache {
     }
 }
 
-pub struct ArpPacket<'a>{
+pub struct ArpPacket {
     pub operation: u16,
     pub sender_ip: [u8; 4],
     pub target_ip: [u8; 4],
     pub sender_mac: [u8; 6],
     pub target_mac: [u8; 6],
-    pub payload: &'a [u8],
 }
 
-impl<'a> ArpPacket<'a> {
-    pub fn parse(bytes: &'a [u8]) -> Option<Self> {
+impl ArpPacket {
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < 28 {
             return None;
         }
@@ -90,19 +88,17 @@ impl<'a> ArpPacket<'a> {
             target_ip,
             sender_mac,
             target_mac,
-            payload: bytes,
         })
     }
 
     pub fn new_reply(sender_ip: [u8; 4], target_ip: [u8; 4],
-                 sender_mac: [u8; 6], target_mac: [u8; 6]) -> ArpPacket<'static>{
+                 sender_mac: [u8; 6], target_mac: [u8; 6]) -> ArpPacket {
         ArpPacket {
             operation: ARP_OP_REPLY,
             sender_ip,
             target_ip,
             sender_mac,
             target_mac,
-            payload: &[],
         }
     }
 
@@ -118,12 +114,5 @@ impl<'a> ArpPacket<'a> {
         b[18..24].copy_from_slice(&self.target_mac);
         b[24..28].copy_from_slice(&self.target_ip);
         b
-    }
-
-    pub fn to_bytes_with_payload(&self) -> Vec<u8> {
-        let mut v = Vec::with_capacity(28 + self.payload.len());
-        v.extend_from_slice(&self.to_bytes());
-        v.extend_from_slice(self.payload);
-        v
     }
 }

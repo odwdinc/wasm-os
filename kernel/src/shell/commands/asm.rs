@@ -253,6 +253,7 @@ pub struct Memory {
 
 /// (data (i32.const offset) "bytes...")
 pub struct DataSeg {
+    #[allow(dead_code)]
     pub mem_idx: u32,
     pub offset:  i32,
     pub bytes:   Vec<u8>,
@@ -331,14 +332,6 @@ impl<'a> Parser<'a> {
         match self.lookahead {
             Some(Token::Keyword(k)) if k == kw => self.bump(),
             _ => panic!("expected keyword '{}'", kw),
-        }
-    }
-
-    /// Consume a keyword and return it, or None if next token is not a keyword.
-    fn try_keyword(&mut self) -> Option<&'a str> {
-        match self.lookahead {
-            Some(Token::Keyword(k)) => { self.bump(); Some(k) }
-            _ => None,
         }
     }
 
@@ -521,6 +514,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Like parse_type_use but the opening '(' has already been consumed.
+    #[allow(dead_code)]
     fn finish_type_use_after_lparen(&mut self, module: &mut Module) -> u32 {
         if let Some(Token::Keyword("type")) = self.lookahead {
             self.bump();
@@ -1273,6 +1267,7 @@ impl WasmEmitter {
 
     pub fn write_u8(&mut self, val: u8) { self.buf.push(val); }
 
+    #[allow(dead_code)]
     pub fn write_u32_raw(&mut self, val: u32) {
         self.buf.extend_from_slice(&val.to_le_bytes());
     }

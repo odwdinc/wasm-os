@@ -184,6 +184,7 @@ static mut FILE_BUF_NEXT: usize   = 0;
 /// constructing a `&'static [u8]` slice.
 pub fn alloc_disk_slot(len: usize) -> Option<*mut u8> {
     if len == 0 { return None; }
+    // SAFETY: single-core bare-metal — no concurrent access possible.
     unsafe {
         let base    = (FILE_BUF_NEXT + 7) & !7; // 8-byte alignment
         let new_end = base + len;

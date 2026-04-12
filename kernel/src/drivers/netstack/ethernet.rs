@@ -3,7 +3,6 @@
 
 pub const ETH_TYPE_IPV4: u16 = 0x0800;
 pub const ETH_TYPE_ARP:  u16 = 0x0806;
-pub const ETH_TYPE_IPV6: u16 = 0x86DD;
 
 pub const ETH_MAC_LEN: usize = 6;
 

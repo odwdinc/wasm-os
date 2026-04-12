@@ -21,6 +21,7 @@ static mut HEAP_NEXT: usize = 0;
 pub struct BumpAllocator;
 
 unsafe impl GlobalAlloc for BumpAllocator {
+    // SAFETY: single-core bare-metal — no concurrent access possible.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let current = HEAP_NEXT;
         let align   = layout.align();

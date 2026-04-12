@@ -386,6 +386,7 @@ impl VirtioBlk {
 
 impl BlockDevice for VirtioBlk {
     fn read_block(&mut self, lba: u32, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), ()> {
+        // SAFETY: single-core bare-metal — no concurrent access possible.
         unsafe {
             REQ_HDR.req_type = BLK_T_IN;
             REQ_HDR.reserved = 0;
@@ -402,6 +403,7 @@ impl BlockDevice for VirtioBlk {
     }
 
     fn write_block(&mut self, lba: u32, buf: &[u8; BLOCK_SIZE]) -> Result<(), ()> {
+        // SAFETY: single-core bare-metal — no concurrent access possible.
         unsafe {
             REQ_HDR.req_type = BLK_T_OUT;
             REQ_HDR.reserved = 0;

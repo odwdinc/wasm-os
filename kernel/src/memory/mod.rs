@@ -24,12 +24,14 @@ pub fn init(phys_mem_offset: u64) {
 ///
 /// Used by the JIT module to write page-table entries (clear NX, set W).
 #[inline]
+#[allow(dead_code)]
 pub fn phys_mem_offset() -> u64 {
     unsafe { PHYS_MEM_OFFSET }
 }
 
 /// Read a `u64` from a physical address through the physical memory window.
 #[inline]
+#[allow(dead_code)]
 fn read_phys_u64(phys: u64) -> u64 {
     let virt = unsafe { PHYS_MEM_OFFSET } + phys;
     unsafe { core::ptr::read_volatile(virt as *const u64) }
@@ -37,6 +39,7 @@ fn read_phys_u64(phys: u64) -> u64 {
 
 /// Write a `u64` to a physical address through the physical memory window.
 #[inline]
+#[allow(dead_code)]
 pub fn write_phys_u64(phys: u64, val: u64) {
     let virt = unsafe { PHYS_MEM_OFFSET } + phys;
     unsafe { core::ptr::write_volatile(virt as *mut u64, val); }
@@ -46,6 +49,7 @@ pub fn write_phys_u64(phys: u64, val: u64) {
 /// current PTE value.  Returns `None` if any level is not present.
 ///
 /// Only handles 4 KiB pages (not 2 MiB / 1 GiB huge pages).
+#[allow(dead_code)]
 pub fn find_pte(virt: usize) -> Option<(u64 /*pte_phys*/, u64 /*pte_val*/)> {
     let v = virt as u64;
     let cr3: u64;

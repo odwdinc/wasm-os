@@ -38,14 +38,7 @@ static mut RAMDISK_DATA: [u8; BLOCK_SIZE * RAMDISK_BLOCKS] = [0u8; BLOCK_SIZE * 
 /// Only one instance should be created; use `Ramdisk::get()`.
 pub struct Ramdisk;
 
-impl Ramdisk {
-    /// Return the singleton ramdisk handle.
-    ///
-    /// Safety: single-core bare-metal — no concurrent access possible.
-    pub fn get() -> Self {
-        Ramdisk
-    }
-}
+impl Ramdisk {}
 
 impl BlockDevice for Ramdisk {
     fn read_block(&mut self, lba: u32, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), ()> {

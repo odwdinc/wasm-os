@@ -23,8 +23,6 @@ pub enum TcpState {
     FinWait2,
     CloseWait,
     Closing,
-    LastAck,
-    TimeWait,
 }
 
 #[derive(Copy, Clone)]
@@ -201,10 +199,7 @@ pub struct TcpPacket<'a> {
     pub dst_port: u16,
     pub seq:      u32,
     pub ack_no:   u32,
-    pub data_off: u8,
     pub flags:    u8,
-    pub window:   u16,
-    pub checksum: u16,
     pub payload:  &'a [u8],
 }
 
@@ -218,22 +213,19 @@ impl<'a> TcpPacket<'a> {
         let seq      = u32::from_be_bytes([bytes[4],  bytes[5],  bytes[6],  bytes[7]]);
         let ack_no   = u32::from_be_bytes([bytes[8],  bytes[9],  bytes[10], bytes[11]]);
         let data_off = bytes[12];
-        let flags    = bytes[13];
-        let window   = u16::from_be_bytes([bytes[14], bytes[15]]);
-        let checksum = u16::from_be_bytes([bytes[16], bytes[17]]);
 
         let hdr_len = ((data_off >> 4) as usize) * 4;
         if hdr_len < 20 || hdr_len > bytes.len() {
             return None;
         }
-        Some(TcpPacket { src_port, dst_port, seq, ack_no, data_off, flags, window, checksum, payload: &bytes[hdr_len..] })
+        let flags = bytes[13];
+        Some(TcpPacket { src_port, dst_port, seq, ack_no, flags, payload: &bytes[hdr_len..] })
     }
 
     pub fn syn(&self) -> bool { self.flags & TCP_SYN != 0 }
     pub fn ack(&self) -> bool { self.flags & TCP_ACK != 0 }
     pub fn fin(&self) -> bool { self.flags & TCP_FIN != 0 }
     pub fn rst(&self) -> bool { self.flags & TCP_RST != 0 }
-    pub fn psh(&self) -> bool { self.flags & TCP_PSH != 0 }
 }
 
 /// Build a complete TCP segment (header + payload) with a correct checksum.

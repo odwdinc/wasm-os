@@ -231,9 +231,12 @@ impl VirtioNet {
             return None;
         }
 
+        // SAFETY: single-core bare-metal — no concurrent access possible.
         let rx_virt = unsafe { find_contiguous_pages(pages_needed, &VIRTQ_RX_BUF)? };
+        // SAFETY: single-core bare-metal — no concurrent access possible.
         let tx_virt = unsafe { find_contiguous_pages(pages_needed, &VIRTQ_TX_BUF)? };
 
+        // SAFETY: single-core bare-metal — no concurrent access possible.
         unsafe {
             core::ptr::write_bytes(rx_virt as *mut u8, 0, pages_needed * 4096);
             core::ptr::write_bytes(tx_virt as *mut u8, 0, pages_needed * 4096);

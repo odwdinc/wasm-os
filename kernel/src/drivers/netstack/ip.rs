@@ -11,10 +11,6 @@ pub const IP_PROTO_UDP: u8 = 17;
 pub struct IpAddr(pub [u8; 4]);
 
 impl IpAddr {
-    pub fn new(a: u8, b: u8, c: u8, d: u8) -> Self {
-        IpAddr([a, b, c, d])
-    }
-
     pub fn from_u32(v: u32) -> Self {
         IpAddr(v.to_le_bytes())
     }
@@ -25,19 +21,6 @@ impl IpAddr {
 
     pub fn is_zero(&self) -> bool {
         self.0 == [0, 0, 0, 0]
-    }
-
-    pub fn is_loopback(&self) -> bool {
-        self.0[0] == 127
-    }
-
-    pub fn is_private(&self) -> bool {
-        // 10.0.0.0/8
-        self.0[0] == 10 ||
-        // 172.16.0.0/12
-        (self.0[0] == 172 && self.0[1] >= 16 && self.0[1] <= 31) ||
-        // 192.168.0.0/16
-        (self.0[0] == 192 && self.0[1] == 168)
     }
 }
 
@@ -55,7 +38,6 @@ pub struct Ipv4Packet<'a>{
     pub flags_offset: u16,
     pub ttl: u8,
     pub protocol: u8,
-    pub checksum: u16,
     pub src: IpAddr,
     pub dst: IpAddr,
     pub payload: &'a [u8],
@@ -82,7 +64,6 @@ impl<'a> Ipv4Packet<'a> {
         let flags_offset = u16::from_be_bytes([bytes[6], bytes[7]]);
         let ttl = bytes[8];
         let protocol = bytes[9];
-        let checksum = u16::from_be_bytes([bytes[10], bytes[11]]);
         
         let mut src = [0u8; 4];
         let mut dst = [0u8; 4];
@@ -97,7 +78,6 @@ impl<'a> Ipv4Packet<'a> {
             flags_offset,
             ttl,
             protocol,
-            checksum,
             src: IpAddr(src),
             dst: IpAddr(dst),
             payload: &bytes[ihl..],
@@ -114,7 +94,6 @@ impl<'a> Ipv4Packet<'a> {
             flags_offset: 0,
             ttl: 64,
             protocol,
-            checksum: 0,
             src,
             dst,
             payload,
