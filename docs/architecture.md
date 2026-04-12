@@ -20,6 +20,11 @@ user-visible execution unit — there are no processes, no POSIX, no native bina
 |  - CWD tracking             |
 |  - virtio-blk + ramdisk     |
 +-----------------------------+
+|  TCP/IP Network Stack       |  ← kernel/src/drivers/netstack/
+|  - virtio-net PCI driver    |
+|  - ARP, IP, TCP, UDP, DHCP  |
+|  - socket host functions    |
++-----------------------------+
 |  Drivers + Interrupts       |  ← kernel/src/drivers/, interrupts/
 |  - framebuffer, serial      |
 |  - PS/2 keyboard, PIT timer |
@@ -138,6 +143,40 @@ The filesystem layer has two parts:
 
 `load_fat_files_to_table()` — called at boot; reads every FAT file into `DISK_POOL` and registers it in `FILE_TABLE`.
 
+### Networking (`drivers/virtio_net.rs`, `drivers/netstack/`)
+
+The network stack is hand-rolled (no third-party crate) and lives entirely in `no_std` Rust.
+
+**virtio-net driver (`drivers/virtio_net.rs`)**
+
+- Detects the virtio-net PCI device via I/O port enumeration
+- Initialises virtqueue rings (RXQ=0, TXQ=1) with 16 descriptors each
+- `send_frame(buf)` — enqueue one descriptor, kick the TX virtqueue
+- `recv_frame(buf) -> usize` — poll the RX used ring, copy data out, refill descriptor
+
+**Network stack (`drivers/netstack/`)**
+
+The `NetStack` struct owns all protocol state and is polled from the scheduler once per task iteration.
+
+| Module | Responsibility |
+|---|---|
+| `mod.rs` | `NetStack`: ARP cache, TCP/UDP socket tables, `poll()`, `handle_eth()`, `send_ip()` |
+| `ethernet.rs` | Ethernet II frame parser and builder; MAC address type |
+| `arp.rs` | ARP table (`ip → MAC`); encode/decode ARP request/reply; MAC learning from incoming IPv4 frames |
+| `ip.rs` | IPv4 packet parser/builder; `ip_chksum` (one's-complement over the 20-byte header only) |
+| `tcp.rs` | TCP segment parser/builder; `TcpSocket` state machine (Listen → SynRecv → Established → CloseWait) |
+| `udp.rs` | UDP datagram parser/builder; `UdpSocket` receive queue |
+| `dhcp.rs` | DHCP DISCOVER/OFFER/REQUEST/ACK client; binds kernel IP at boot via a spin-poll loop |
+
+**QEMU networking**
+
+QEMU SLiRP (`-netdev user`) provides:
+- Guest IP: `10.0.2.15` (assigned via DHCP)
+- Gateway/host: `10.0.2.2`
+- `hostfwd=tcp::8080-:8080` — forwards host port 8080 to guest port 8080
+
+The kernel seeds its ARP cache from the Ethernet source MAC of every incoming IPv4 frame, so TCP replies to the SLiRP gateway work without waiting for an ARP exchange (SLiRP never sends ARP requests before opening connections).
+
 ### Block Devices (`fs/block.rs`, `drivers/virtio_blk.rs`)
 
 - `BlockDevice` trait — `read_block(lba, buf)` / `write_block(lba, buf)`
@@ -199,6 +238,26 @@ All imports are resolved by name at instantiation time via the host function reg
 | `"env"."fs_size"` | `(param i32 i32) → i32` | Return file size in bytes (name_ptr, name_len), or -1 if not found |
 | `"env"."fb_set_pixel"` | `(param i32 i32 i32)` | Write one pixel to the framebuffer (x, y, rgb as 0x00RRGGBB); out-of-bounds silently ignored |
 | `"env"."fb_present"` | `()` | Present the framebuffer (no-op on single-buffered display; reserved for double-buffering) |
+| `"env"."fb_blit"` | `(param i32 i32 i32)` | Blit a packed 0x00RRGGBB pixel buffer from WASM linear memory to the framebuffer (ptr, width, height); out-of-bounds silently clamped |
 
-The registry capacity is `MAX_HOST_FUNCS = 32`.  Additional functions can be registered
+**Network host functions (registered under `"net"`):**
+
+| Import | Signature | Description |
+|---|---|---|
+| `"net"."listen"` | `(param i32) → i32` | TCP listen on port; returns listen-socket handle or -1 |
+| `"net"."connect"` | `(param i32 i32) → i32` | TCP active connect (ip_u32_le, port); returns handle or -1 |
+| `"net"."accept"` | `(param i32) → i32` | Accept pending connection (non-blocking); returns conn handle or -1 if none ready |
+| `"net"."recv"` | `(param i32 i32 i32) → i32` | Receive into memory (handle, ptr, cap); returns byte count, 0=no data, -1=error |
+| `"net"."send"` | `(param i32 i32 i32) → i32` | Send from memory (handle, ptr, len); returns bytes sent or -1 |
+| `"net"."close"` | `(param i32) → i32` | Close TCP connection; always returns 0 |
+| `"net"."status"` | `(param i32) → i32` | Socket state: 0=closed, 1=listen, 2=handshaking, 3=established, 4=teardown |
+| `"net"."get_ip"` | `() → i32` | Kernel IP as u32 little-endian (0 if DHCP not yet bound) |
+| `"net"."set_ip"` | `(param i32) → i32` | Manually set the kernel IP (ip_u32_le); always returns 0 |
+| `"net"."udp_bind"` | `(param i32) → i32` | Bind UDP socket to port; returns handle or -1 |
+| `"net"."udp_connect"` | `(param i32 i32 i32) → i32` | Set UDP remote (handle, ip_u32_le, port); returns 0 or -1 |
+| `"net"."udp_send"` | `(param i32 i32 i32) → i32` | Send UDP datagram (handle, ptr, len); returns bytes sent or -1 |
+| `"net"."udp_recv"` | `(param i32 i32 i32) → i32` | Receive UDP datagram (handle, ptr, cap); returns byte count or 0 (non-blocking) |
+| `"net"."udp_close"` | `(param i32) → i32` | Close UDP socket; always returns 0 |
+
+The registry capacity is `MAX_HOST_FUNCS = 48`.  Additional functions can be registered
 via `engine::register_host` before any module is spawned.

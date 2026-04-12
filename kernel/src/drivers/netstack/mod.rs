@@ -111,7 +111,15 @@ impl NetworkStack {
                 if let Some(p) = arp::ArpPacket::parse(eth.payload) { self.handle_arp(p); }
             }
             ETH_TYPE_IPV4 => {
-                if let Some(p) = ip::Ipv4Packet::parse(eth.payload)  { self.handle_ip(p); }
+                if let Some(p) = ip::Ipv4Packet::parse(eth.payload) {
+                    // Learn the sender's MAC from every unicast IP frame so we
+                    // can reply even without a prior ARP exchange (e.g. TCP from
+                    // the SLiRP gateway 10.0.2.2 which never ARPs before SYN).
+                    if !eth.is_broadcast() {
+                        self.arp.insert(p.src.0, eth.src);
+                    }
+                    self.handle_ip(p);
+                }
             }
             _ => {}
         }

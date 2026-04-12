@@ -72,7 +72,7 @@ qemu-system-x86_64 \
     -drive format=raw,file="$IMG" \
     $FS_DRIVE \
     -m 512M \
-    -netdev user,id=net0 \
+    -netdev user,id=net0,hostfwd=tcp::8080-:8080 \
     -device virtio-net-pci,netdev=net0 \
     -serial mon:stdio \
     -no-reboot \

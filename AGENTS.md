@@ -1,13 +1,12 @@
 # AGENTS.md — WASM-First OS
 
-> Bare-metal Rust kernel. WebAssembly as the system ABI. Sprints 1–4 + A–D,G complete.
+> Bare-metal Rust kernel. WebAssembly as the system ABI. Sprints 1–4 + A–G complete.
 
 ---
 
 ## Project Status
 
-Sprints 1–4 (MVP) and A–D,G (runtime completeness, isolation, cooperative scheduling, persistent FS, in-OS WAT assembler) are **done**.  
-Sprint E: (Networking) is **in progress**.  
+Sprints 1–4 (MVP) and A–G (runtime completeness, isolation, cooperative scheduling, persistent FS, networking, in-OS WAT assembler) are **done**.  
 See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdown.
 
 ---
@@ -34,7 +33,16 @@ See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdo
 │       │   ├── keyboard.rs      # PS/2 scancode decoder, try_next_key / next_key
 │       │   ├── serial.rs        # 16550 UART, COM1 115200 8N1
 │       │   ├── pit.rs           # 8253 PIT + 8259 PIC; ~100 Hz tick counter
-│       │   └── virtio_blk.rs    # Virtio 1.0 block device, DMA + page-table walk
+│       │   ├── virtio_blk.rs    # Virtio 1.0 block device, DMA + page-table walk
+│       │   ├── virtio_net.rs    # Virtio legacy NIC; virtqueue TX/RX, raw Ethernet frames
+│       │   └── netstack/        # TCP/IP network stack
+│       │       ├── mod.rs       # NetStack: ARP cache, TCP/UDP sockets, DHCP, send_ip
+│       │       ├── arp.rs       # ARP table, request/reply encoding
+│       │       ├── ethernet.rs  # Ethernet II frame parser/builder
+│       │       ├── ip.rs        # IPv4 packet parser/builder, ip_chksum
+│       │       ├── tcp.rs       # TCP segment parser/builder, TcpSocket state machine
+│       │       ├── udp.rs       # UDP datagram parser/builder, UdpSocket
+│       │       └── dhcp.rs      # DHCP DISCOVER/OFFER/REQUEST/ACK client
 │       ├── interrupts/
 │       │   ├── mod.rs           # IDT init
 │       │   ├── idt.rs           # IDT structure and loading
@@ -79,8 +87,15 @@ See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdo
 ├── runner/                      # Host-side tool: wraps kernel ELF → BIOS disk image
 │   └── src/main.rs
 │
-├── userland/                    # WASM source modules (.wat)
-│   └── README.md
+├── userland/                    # WASM source modules (.wat / .wasm)
+│   ├── README.md
+│   ├── hello/hello.wat          # Prints "Hello from WASM!\n"
+│   ├── greet/greet.wat          # Prints a greeting string
+│   ├── fib/fib.wat              # Recursive Fibonacci
+│   ├── primes/primes.wat        # Sieve of Eratosthenes
+│   ├── counter/counter.wat      # Counting demo (cooperative yield)
+│   ├── collatz/collatz.wat      # Collatz sequence
+│   └── httpd/httpd.wat          # Minimal HTTP/1.0 server on :8080
 │
 ├── wasm-test/                   # Integration tests for the WASM interpreter
 │   ├── src/lib.rs
@@ -115,6 +130,8 @@ See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdo
 | `drivers/serial.rs` | `init()`, `write_byte/str()`, `read_byte()`, `_print(args)` |
 | `drivers/pit.rs` | `init()`, `ticks() -> u64`, `pit_on_tick()` |
 | `drivers/virtio_blk.rs` | `VirtioBlk::try_init() -> Option<VirtioBlk>` |
+| `drivers/virtio_net.rs` | `VirtioNet::try_init() -> Option<VirtioNet>`, `send_frame(buf)`, `recv_frame(buf) -> usize` |
+| `drivers/netstack/mod.rs` | `NetStack::new()`, `poll()`, `tcp_listen(port)`, `tcp_accept(handle)`, `tcp_recv(handle, buf)`, `tcp_send(handle, buf)`, `tcp_close(handle)`, `tcp_status(handle)`, `get_ip()`, `udp_bind(port)`, `udp_send(handle, buf)`, `udp_recv(handle, buf)`, `udp_close(handle)` |
 
 ### Filesystem (`kernel/src/fs/`)
 
@@ -186,8 +203,28 @@ See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full sprint breakdo
 | `"fs_size"` | `(param i32 i32) → i32` | Return file size or -1 |
 | `"fb_set_pixel"` | `(param i32 i32 i32)` | Write pixel to framebuffer (x, y, 0x00RRGGBB) |
 | `"fb_present"` | `()` | Present framebuffer (no-op; reserved for double-buffering) |
+| `"fb_blit"` | `(param i32 i32 i32)` | Blit packed pixel buffer to framebuffer (ptr, width, height) |
 
-Registry capacity: `MAX_HOST_FUNCS = 32`.
+**Network host functions (registered under `"net"`):**
+
+| Name | Signature | Behaviour |
+|---|---|---|
+| `"listen"` | `(param i32) → i32` | TCP listen on port; returns listen-socket handle or -1 |
+| `"connect"` | `(param i32 i32) → i32` | TCP active connect (ip_u32_le, port); returns handle or -1 |
+| `"accept"` | `(param i32) → i32` | Accept pending connection (non-blocking); returns conn handle or -1 |
+| `"recv"` | `(param i32 i32 i32) → i32` | Receive into memory (handle, ptr, cap); returns byte count, 0=no data, -1=error |
+| `"send"` | `(param i32 i32 i32) → i32` | Send from memory (handle, ptr, len); returns bytes sent or -1 |
+| `"close"` | `(param i32) → i32` | Close TCP connection; always returns 0 |
+| `"status"` | `(param i32) → i32` | Socket state: 0=closed, 1=listen, 2=handshaking, 3=established, 4=teardown |
+| `"get_ip"` | `() → i32` | Kernel IP as u32 little-endian (0 if DHCP not yet bound) |
+| `"set_ip"` | `(param i32) → i32` | Manually set the kernel IP (ip_u32_le); always returns 0 |
+| `"udp_bind"` | `(param i32) → i32` | Bind UDP socket to port; returns handle or -1 |
+| `"udp_connect"` | `(param i32 i32 i32) → i32` | Set UDP remote (handle, ip_u32_le, port); returns 0 or -1 |
+| `"udp_send"` | `(param i32 i32 i32) → i32` | Send UDP datagram (handle, ptr, len); returns bytes sent or -1 |
+| `"udp_recv"` | `(param i32 i32 i32) → i32` | Receive UDP datagram (handle, ptr, cap); returns byte count or 0 (non-blocking) |
+| `"udp_close"` | `(param i32) → i32` | Close UDP socket; always returns 0 |
+
+Registry capacity: `MAX_HOST_FUNCS = 48`.
 
 ### Capacity Limits
 
@@ -195,7 +232,7 @@ Registry capacity: `MAX_HOST_FUNCS = 32`.
 |---|---|---|
 | `MAX_INSTANCES` | 4 | engine.rs — live WASM instances |
 | `MAX_MEM_PAGES` | 16 | engine.rs — 64 KiB pages per instance (1 MiB) |
-| `MAX_HOST_FUNCS` | 32 | engine.rs — host function registry |
+| `MAX_HOST_FUNCS` | 48 | engine.rs — host function registry |
 | `MAX_FUNCS` | 512 | interp.rs — imports + defined functions |
 | `MAX_TYPES` | 128 | interp.rs — type section entries |
 | `MAX_LOCALS` | 32 | interp.rs — locals per function frame |
@@ -255,6 +292,14 @@ When implementing a sprint task:
 
 ---
 
-## Current Work (Sprint E: Networking)
+## Completed Sprints Summary
 
-See [Post_MVP_Agile_plan.md](Post_MVP_Agile_plan.md) for the full task breakdown.
+| Sprint | Key Deliverables |
+|---|---|
+| 1–4 (MVP) | Boot, VGA/serial output, PS/2 keyboard, WASM interpreter (i32), shell, in-memory FS |
+| A | i64, f32/f64 (soft-float), globals, `call_indirect`, `br_table`, multi-value returns |
+| B | Instance pool, named host registry, `ps` command, memory isolation |
+| C | PIT timer, cooperative scheduler, `task-run`/`task-kill`/`tasks`, `yield`/`sleep_ms` |
+| D | virtio-blk driver, FAT12/16/32 via rust-fatfs, persistent disk, full shell FS commands |
+| E | virtio-net PCI driver, hand-rolled ARP/IP/TCP/UDP/DHCP stack, 12 socket host functions, `httpd.wasm` demo |
+| G | In-kernel WAT tokenizer + binary emitter, `asm` shell command, full edit→asm→run round-trip |

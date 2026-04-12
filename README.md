@@ -20,30 +20,30 @@
 
 ## Current Status
 
-Sprints 1–4 (MVP) and A–D (runtime completeness, isolation, scheduling, persistent FS) are complete.
+Sprints 1–4 (MVP) and A–E, G (runtime completeness, isolation, scheduling, persistent FS, networking, in-OS WAT assembler) are complete.
 
-The system boots, accepts keyboard/serial input, mounts a FAT filesystem, executes real WASM modules, and runs multiple modules concurrently as cooperative tasks.
+The system boots, acquires an IP address via DHCP, accepts keyboard/serial input, mounts a FAT filesystem, executes real WASM modules, runs multiple modules concurrently as cooperative tasks, and serves HTTP over TCP from a WASM module.
 
 ```
 Type 'help' for commands.
 > ls
   hello.wasm               1234 bytes
   fib.wasm                  567 bytes
+  httpd.wasm                890 bytes
 > run fib.wasm 10
 55
-> info fib.wasm
-file:    fib.wasm
-funcs:   2 defined, 2 imported
-exports: 1
 > df
 Filesystem    Size (K)  Used (K)  Avail (K)
-FAT              32768        12     32756
-> task-run hello.wasm
-task 0 spawned: hello.wasm
-> tasks
-[0] hello.wasm  (suspended)
-> ps
-[0] hello.wasm  pages=1
+FAT              32768        16     32752
+> task-run httpd.wasm
+task 0 spawned: httpd.wasm
+[httpd] listening on :8080
+```
+
+```bash
+# from the host
+curl http://localhost:8080/
+Hello from WASM-First OS!
 ```
 
 ---
@@ -166,6 +166,26 @@ Compile with `wat2wasm`, place under `userland/`, run `tools/wasm-pack.sh`.
 | `"env"."fs_size"` | `(param i32 i32) → i32` | Return file size in bytes (name_ptr, name_len), or -1 if not found |
 | `"env"."fb_set_pixel"` | `(param i32 i32 i32)` | Write one pixel to the framebuffer (x, y, rgb as 0x00RRGGBB) |
 | `"env"."fb_present"` | `()` | Present the framebuffer (no-op; reserved for future double-buffering) |
+| `"env"."fb_blit"` | `(param i32 i32 i32)` | Blit a packed 0x00RRGGBB pixel buffer from WASM memory to the framebuffer (ptr, width, height) |
+
+**Network host functions (registered under `"net"`):**
+
+| Import | Signature | Description |
+|---|---|---|
+| `"net"."listen"` | `(param i32) → i32` | TCP listen on port; returns listen-socket handle or -1 |
+| `"net"."connect"` | `(param i32 i32) → i32` | TCP active connect (ip_u32_le, port); returns handle or -1 |
+| `"net"."accept"` | `(param i32) → i32` | Accept pending connection (non-blocking); returns conn handle or -1 if none ready |
+| `"net"."recv"` | `(param i32 i32 i32) → i32` | Receive into memory (handle, ptr, cap); returns byte count, 0 if no data yet, -1 on error |
+| `"net"."send"` | `(param i32 i32 i32) → i32` | Send from memory (handle, ptr, len); returns bytes sent or -1 |
+| `"net"."close"` | `(param i32) → i32` | Close a TCP connection; always returns 0 |
+| `"net"."status"` | `(param i32) → i32` | Socket state: 0=closed, 1=listen, 2=handshaking, 3=established, 4=teardown |
+| `"net"."get_ip"` | `() → i32` | Kernel IP address as u32 little-endian (0 if DHCP not yet bound) |
+| `"net"."set_ip"` | `(param i32) → i32` | Manually set the kernel IP (ip_u32_le); always returns 0 |
+| `"net"."udp_bind"` | `(param i32) → i32` | Bind UDP socket to port; returns handle or -1 |
+| `"net"."udp_connect"` | `(param i32 i32 i32) → i32` | Set UDP remote (handle, ip_u32_le, port); returns 0 or -1 |
+| `"net"."udp_send"` | `(param i32 i32 i32) → i32` | Send UDP datagram (handle, ptr, len); returns bytes sent or -1 |
+| `"net"."udp_recv"` | `(param i32 i32 i32) → i32` | Receive UDP datagram (handle, ptr, cap); returns byte count or 0 if no data (non-blocking) |
+| `"net"."udp_close"` | `(param i32) → i32` | Close UDP socket; always returns 0 |
 
 ---
 
@@ -183,6 +203,11 @@ Compile with `wat2wasm`, place under `userland/`, run `tools/wasm-pack.sh`.
 |  Shell + FAT Filesystem     |  ← kernel/src/shell/, kernel/src/fs/
 |  - commands, CWD tracking   |
 |  - virtio-blk + ramdisk     |
++-----------------------------+
+|  TCP/IP Network Stack       |  ← kernel/src/drivers/netstack/
+|  - virtio-net PCI driver    |
+|  - ARP, IP, TCP, UDP, DHCP  |
+|  - socket host functions    |
 +-----------------------------+
 |  Kernel (no_std Rust)       |  ← kernel/src/
 |  - framebuffer, serial      |
@@ -222,9 +247,9 @@ See [docs/wasm-runtime.md](docs/wasm-runtime.md) for the complete opcode table.
 | B | Runtime isolation: instance pool, named host registry, `ps` | Done |
 | C | Cooperative scheduling: PIT timer, task queue, `task-run`/`task-kill`/`tasks` | Done |
 | D | Persistent filesystem: virtio-blk, FAT12/16/32, shell FS commands | Done |
-| E | Networking: virtio-net, TCP/IP, socket host functions | Planned |
+| E | Networking: virtio-net, TCP/IP stack, socket host functions, `httpd.wasm` | Done |
 | F | JIT compilation: x86_64 codegen, tiered execution | Planned |
-| G | In-OS WAT assembler: edit, assemble, and run without host tools | In progress |
+| G | In-OS WAT assembler: edit, assemble, and run without host tools | Done |
 
 ---
 

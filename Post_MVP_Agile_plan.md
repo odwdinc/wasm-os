@@ -344,16 +344,17 @@ The kernel is not a web server — WASM modules are.
 
 ### 4. Demo Module
 
-* [ ] `httpd.wat` — minimal HTTP/1.0 server in WAT/WASM
-* [ ] Responds to `GET /` with `Hello from WASM-First OS!`
+* [x] `httpd.wat` — minimal HTTP/1.0 server in WAT/WASM
+* [x] Responds to `GET /` with `Hello from WASM-First OS!`
 
 ---
 
-## Done When
+## Done When ✅
 
 ```
-> run httpd.wasm
-Listening on 0.0.0.0:8080
+> task-run httpd.wasm
+task 0 spawned: httpd.wasm
+[httpd] listening on :8080
 ```
 
 ```bash

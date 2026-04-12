@@ -48,7 +48,7 @@ linear memory.  All state lives in `static mut` — no heap allocation.
 ### Host Function Registry
 
 ```
-MAX_HOST_FUNCS = 32
+MAX_HOST_FUNCS = 48
 ```
 
 At boot, `init_host_fns()` registers the kernel's built-in host functions.
@@ -75,6 +75,26 @@ Import resolution happens at instantiation: if any import is unregistered,
 | `"fs_write"` | `(param i32 i32 i32 i32) → i32` | Write bytes to a file (name_ptr, name_len, buf_ptr, buf_len); returns 0 or -1 |
 | `"fs_size"` | `(param i32 i32) → i32` | Return file size in bytes (name_ptr, name_len), or -1 if not found |
 | `"args_get"` | `(param i32 i32) → i32` | Copy space-joined run args into memory (ptr, cap); returns byte count or -1 |
+| `"fb_blit"` | `(param i32 i32 i32)` | Blit packed pixel buffer to framebuffer (ptr, width, height) |
+
+**Network host functions (registered under `"net"`):**
+
+| Name | Signature | Behaviour |
+|---|---|---|
+| `"listen"` | `(param i32) → i32` | TCP listen on port; returns listen-socket handle or -1 |
+| `"connect"` | `(param i32 i32) → i32` | TCP active connect (ip_u32_le, port); returns handle or -1 |
+| `"accept"` | `(param i32) → i32` | Accept pending connection (non-blocking); returns conn handle or -1 |
+| `"recv"` | `(param i32 i32 i32) → i32` | Receive into memory (handle, ptr, cap); byte count, 0=no data, -1=error |
+| `"send"` | `(param i32 i32 i32) → i32` | Send from memory (handle, ptr, len); returns bytes sent or -1 |
+| `"close"` | `(param i32) → i32` | Close TCP connection; always returns 0 |
+| `"status"` | `(param i32) → i32` | 0=closed, 1=listen, 2=handshaking, 3=established, 4=teardown |
+| `"get_ip"` | `() → i32` | Kernel IP as u32 little-endian (0 if DHCP not bound) |
+| `"set_ip"` | `(param i32) → i32` | Manually set the kernel IP (ip_u32_le); always returns 0 |
+| `"udp_bind"` | `(param i32) → i32` | Bind UDP socket to port; returns handle or -1 |
+| `"udp_connect"` | `(param i32 i32 i32) → i32` | Set UDP remote (handle, ip_u32_le, port); 0 or -1 |
+| `"udp_send"` | `(param i32 i32 i32) → i32` | Send UDP datagram (handle, ptr, len); bytes sent or -1 |
+| `"udp_recv"` | `(param i32 i32 i32) → i32` | Receive UDP datagram (handle, ptr, cap); byte count or 0 (non-blocking) |
+| `"udp_close"` | `(param i32) → i32` | Close UDP socket; always returns 0 |
 
 ### Instance Pool
 
