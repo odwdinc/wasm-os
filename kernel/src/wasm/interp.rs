@@ -160,6 +160,39 @@ const PAGE_SIZE: usize = 65536;
 
 const NO_ELSE: usize = usize::MAX;
 
+// ── Pre-computed jump table ───────────────────────────────────────────────────
+//
+// `scan_block_end` is an O(n) linear scan of the function body.  Calling it on
+// every `block`/`loop`/`if` opcode during hot execution (e.g. the inner loops
+// of a NES CPU emulator) causes a catastrophic slowdown — effectively O(n)
+// byte-scan overhead per structural opcode hit, millions of times per second.
+//
+// The fix: at instantiation time, pre-scan every function body once and store
+// all `(body_idx, scan_start) → (end_pc, else_pc)` results in an open-
+// addressing hash table.  The dispatch loop then does a O(1) hash lookup
+// instead of a repeated linear scan.
+
+/// Size of the jump-table hash map.  Must be a power of two.
+/// 4096 slots keep the load factor ≤ 50 % for typical WASM modules
+/// (nes.wasm has 144 functions and ~1500 structural opcodes).
+const JUMP_SLOTS: usize = 4096;
+
+#[derive(Clone, Copy)]
+struct JumpSlot {
+    /// Body index into `Interpreter::bodies`.  `u16::MAX` = empty slot.
+    key_body: u16,
+    _pad:     u16,
+    /// Scan-start PC (= opcode_pc + 2, the `start` arg to `scan_block_end`).
+    key_pc:   u32,
+    end_pc:   u32,
+    /// `u32::MAX` = `NO_ELSE`.
+    else_pc:  u32,
+}
+
+const EMPTY_JUMP_SLOT: JumpSlot = JumpSlot {
+    key_body: u16::MAX, _pad: 0, key_pc: 0, end_pc: 0, else_pc: u32::MAX,
+};
+
 /// Signature for a kernel host function callable from WASM.
 ///
 /// - `vstack` — the interpreter's value stack (`i64` entries).
@@ -349,6 +382,10 @@ pub struct Interpreter<'a> {
     pub mem:           &'a mut [u8],
     pub host_fns:      [Option<HostFn>; MAX_FUNCS],
 
+    /// Pre-computed block/loop/if → end_pc hash table (open-addressing).
+    /// Populated once during `new()`; read-only during execution.
+    jump_table: [JumpSlot; JUMP_SLOTS],
+
     /// Active WASM linear memory pages (64 KiB each).
     /// Bounds checks use `current_pages * PAGE_SIZE`; memory.grow increases this.
     pub current_pages: u32,
@@ -411,6 +448,14 @@ impl<'a> Interpreter<'a> {
             parse_element_section(eb, &mut table, &mut table_size)?;
         }
 
+        // Pre-scan all function bodies to build the O(1) jump table.
+        // This replaces the per-dispatch O(n) scan_block_end calls with a
+        // single O(n_total) pass at instantiation time.
+        let mut jump_table = [EMPTY_JUMP_SLOT; JUMP_SLOTS];
+        for bi in 0..body_count {
+            pre_scan_body_jumps(bodies[bi], bi, &mut jump_table);
+        }
+
         let max_pages = (mem.len() / PAGE_SIZE) as u32;
         Ok(Self {
             bodies, body_count, local_counts,
@@ -425,6 +470,7 @@ impl<'a> Interpreter<'a> {
 
             mem,
             host_fns,
+            jump_table,
             current_pages: initial_pages,
             max_pages,
             yield_requested: false,
@@ -528,6 +574,25 @@ impl<'a> Interpreter<'a> {
         Ok(self.vstack[self.vsp])
     }
 
+    /// O(1) hash-table lookup for the pre-computed `(end_pc, else_pc)` of the
+    /// block/loop/if whose body starts at `scan_start` in body `body_idx`.
+    ///
+    /// Returns `None` only if the entry is absent (table overflow at init time,
+    /// or malformed code).  Callers fall back to `scan_block_end` in that case.
+    #[inline(always)]
+    fn jump_lookup(&self, body_idx: usize, scan_start: usize) -> Option<(usize, usize)> {
+        let mut i = jump_hash(body_idx, scan_start);
+        loop {
+            let s = &self.jump_table[i];
+            if s.key_body == u16::MAX { return None; }
+            if s.key_body as usize == body_idx && s.key_pc as usize == scan_start {
+                let else_pc = if s.else_pc == u32::MAX { NO_ELSE } else { s.else_pc as usize };
+                return Some((s.end_pc as usize, else_pc));
+            }
+            i = (i + 1) & (JUMP_SLOTS - 1);
+        }
+    }
+
     fn ctrl_push(&mut self, cf: CtrlFrame) -> Result<(), InterpError> {
         if self.ctrl_depth >= MAX_CTRL_DEPTH { return Err(InterpError::CtrlStackOverflow); }
         self.ctrl[self.ctrl_depth] = cf;
@@ -566,12 +631,14 @@ impl<'a> Interpreter<'a> {
                 // ── block <blocktype> ─────────────────────────────────────────
                 OP_BLOCK => {
                     let fi   = self.fdepth - 1;
+                    let bi   = self.frames[fi].body_idx;
                     let pc   = self.frames[fi].pc;
-                    let body = self.bodies[self.frames[fi].body_idx];
+                    let body = self.bodies[bi];
                     // Skip blocktype (single byte in MVP).
                     let pc_body = pc + 1;
                     self.frames[fi].pc = pc_body;
-                    let (end_pc, _) = scan_block_end(body, pc_body)
+                    let (end_pc, _) = self.jump_lookup(bi, pc_body)
+                        .or_else(|| scan_block_end(body, pc_body))
                         .ok_or(InterpError::MalformedCode)?;
                     self.ctrl_push(CtrlFrame {
                         kind: BlockKind::Block,
@@ -582,11 +649,13 @@ impl<'a> Interpreter<'a> {
                 // ── loop <blocktype> ─────────────────────────────────────────
                 OP_LOOP => {
                     let fi   = self.fdepth - 1;
+                    let bi   = self.frames[fi].body_idx;
                     let pc   = self.frames[fi].pc;
-                    let body = self.bodies[self.frames[fi].body_idx];
+                    let body = self.bodies[bi];
                     let pc_body = pc + 1;
                     self.frames[fi].pc = pc_body;
-                    let (end_pc, _) = scan_block_end(body, pc_body)
+                    let (end_pc, _) = self.jump_lookup(bi, pc_body)
+                        .or_else(|| scan_block_end(body, pc_body))
                         .ok_or(InterpError::MalformedCode)?;
                     self.ctrl_push(CtrlFrame {
                         kind: BlockKind::Loop,
@@ -597,11 +666,13 @@ impl<'a> Interpreter<'a> {
                 // ── if <blocktype> ────────────────────────────────────────────
                 OP_IF => {
                     let fi        = self.fdepth - 1;
+                    let bi        = self.frames[fi].body_idx;
                     let pc        = self.frames[fi].pc;
-                    let body      = self.bodies[self.frames[fi].body_idx];
+                    let body      = self.bodies[bi];
                     let pc_body   = pc + 1; // after blocktype
                     self.frames[fi].pc = pc_body;
-                    let (end_pc, else_pc) = scan_block_end(body, pc_body)
+                    let (end_pc, else_pc) = self.jump_lookup(bi, pc_body)
+                        .or_else(|| scan_block_end(body, pc_body))
                         .ok_or(InterpError::MalformedCode)?;
                     let cond = self.v_pop()?;
                     if cond != 0 {
@@ -1448,6 +1519,7 @@ impl<'a> Interpreter<'a> {
                         }
                         sub => {
                             crate::println!("[wasm] unknown 0xFC sub-opcode: 0x{:02X} ({})", sub, sub);
+                            let _ = sub;
                             return Err(InterpError::UnknownOpcode(0xFC));
                         }
                     }
@@ -1560,6 +1632,108 @@ fn do_br(interp: &mut Interpreter, n: usize) -> Result<(), InterpError> {
         }
     }
     Ok(())
+}
+
+// ── Jump-table helpers ────────────────────────────────────────────────────────
+
+/// Map `(body_idx, scan_start)` to a slot index (power-of-two mask).
+#[inline(always)]
+fn jump_hash(body_idx: usize, scan_start: usize) -> usize {
+    let h = (body_idx as u64).wrapping_mul(2654435761)
+        ^ (scan_start as u64).wrapping_mul(2246822519);
+    (h ^ (h >> 16)) as usize & (JUMP_SLOTS - 1)
+}
+
+/// Insert one entry into the jump table using linear probing.
+/// Silently drops if body_idx exceeds u16 range or the table is full.
+fn jump_insert(
+    table:      &mut [JumpSlot; JUMP_SLOTS],
+    body_idx:   usize,
+    scan_start: usize,
+    end_pc:     usize,
+    else_pc:    usize,
+) {
+    if body_idx >= u16::MAX as usize { return; }
+    let mut i = jump_hash(body_idx, scan_start);
+    for _ in 0..JUMP_SLOTS {
+        if table[i].key_body == u16::MAX {
+            table[i] = JumpSlot {
+                key_body: body_idx as u16,
+                _pad:     0,
+                key_pc:   scan_start as u32,
+                end_pc:   end_pc as u32,
+                else_pc:  if else_pc == NO_ELSE { u32::MAX } else { else_pc as u32 },
+            };
+            return;
+        }
+        i = (i + 1) & (JUMP_SLOTS - 1);
+    }
+    // Table full — entry dropped; dispatch will fall back to scan_block_end.
+}
+
+/// Walk one function body and populate the jump table for every block/loop/if
+/// found inside it (including nested ones).  Uses the same immediate-skipping
+/// rules as `scan_block_end` so raw immediate bytes cannot be mistaken for
+/// structural opcodes.
+fn pre_scan_body_jumps(
+    body:     &[u8],
+    body_idx: usize,
+    table:    &mut [JumpSlot; JUMP_SLOTS],
+) {
+    let mut i = 0usize;
+    while i < body.len() {
+        let op = body[i];
+        i += 1;
+        match op {
+            // Structural opcodes: record jump entry, then continue INSIDE the
+            // body so that nested blocks are also recorded in a single pass.
+            0x02 | 0x03 | 0x04 => {
+                // i now points to the blocktype byte.
+                if i >= body.len() { return; }
+                let scan_start = i + 1; // first byte of block body
+                i += 1; // advance past blocktype
+                if let Some((end_pc, else_pc)) = scan_block_end(body, scan_start) {
+                    jump_insert(table, body_idx, scan_start, end_pc, else_pc);
+                }
+                // Do NOT skip to end_pc: continue from scan_start (i) so that
+                // nested blocks inside this body are discovered.
+            }
+            // Single LEB-128 immediate.
+            0x0C | 0x0D |            // br, br_if
+            0x10 |                   // call
+            0x20 | 0x21 | 0x22 |    // local.get/set/tee
+            0x23 | 0x24 |            // global.get/set
+            0x41 | 0x42 => {         // i32.const, i64.const
+                i += skip_leb128(body, i).unwrap_or(0);
+            }
+            // call_indirect: two LEB-128.
+            0x11 => {
+                i += skip_leb128(body, i).unwrap_or(0);
+                i += skip_leb128(body, i).unwrap_or(0);
+            }
+            // br_table: count + (count+1) labels.
+            0x0E => {
+                if let Some((count, n)) = read_u32_leb128(&body[i..]) {
+                    i += n;
+                    for _ in 0..=count {
+                        i += skip_leb128(body, i).unwrap_or(1);
+                    }
+                } else { return; }
+            }
+            // Memory load/store: align + offset (two LEB-128).
+            0x28..=0x3E => {
+                i += skip_leb128(body, i).unwrap_or(0);
+                i += skip_leb128(body, i).unwrap_or(0);
+            }
+            0x3F | 0x40 => { i += 1; } // memory.size/grow: reserved byte
+            0x43 => { i += 4; }         // f32.const: 4-byte IEEE literal
+            0x44 => { i += 8; }         // f64.const: 8-byte IEEE literal
+            // 0xFC prefix (saturating trunc, bulk-memory): sub-opcode LEB128.
+            0xFC => { i += skip_leb128(body, i).unwrap_or(0); }
+            // All other opcodes: no immediates.
+            _ => {}
+        }
+    }
 }
 
 // ── Scan ahead for matching end/else ─────────────────────────────────────────

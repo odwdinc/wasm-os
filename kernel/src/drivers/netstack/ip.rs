@@ -1,6 +1,5 @@
 // drivers/network/ip.rs — IPv4 packet handling
 
-use super::ethernet::ETH_MAC_LEN;
 use alloc::vec::Vec;
 
 

@@ -75,13 +75,20 @@ thread_local! {
     static OUTPUT: RefCell<Vec<u8>> = RefCell::new(Vec::new());
 }
 
+fn append_output(bytes: &[u8]) {
+    OUTPUT.with(|o| o.borrow_mut().extend_from_slice(bytes));
+    // Mirror to stderr so output is visible with `cargo test -- --nocapture`
+    // (or always, since eprintln! bypasses libtest's stdout capture).
+    eprint!("{}", String::from_utf8_lossy(bytes));
+}
+
 fn host_print(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
     if *vsp < 2 { return Err(InterpError::StackUnderflow); }
     let len = vstack[*vsp - 1] as usize;
     let ptr = vstack[*vsp - 2] as usize;
     *vsp -= 2;
     let end = ptr.saturating_add(len).min(mem.len());
-    OUTPUT.with(|o| o.borrow_mut().extend_from_slice(&mem[ptr..end]));
+    append_output(&mem[ptr..end]);
     Ok(())
 }
 
@@ -89,10 +96,31 @@ fn host_print_int(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Resul
     if *vsp < 1 { return Err(InterpError::StackUnderflow); }
     let n = vstack[*vsp - 1] as i32;
     *vsp -= 1;
-    OUTPUT.with(|o| {
-        let s = format!("{n}\n");
-        o.borrow_mut().extend_from_slice(s.as_bytes());
-    });
+    append_output(format!("{n}\n").as_bytes());
+    Ok(())
+}
+
+fn host_print_i64(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let n = vstack[*vsp - 1];
+    *vsp -= 1;
+    append_output(format!("{n}\n").as_bytes());
+    Ok(())
+}
+
+fn host_print_char(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let c = (vstack[*vsp - 1] & 0xFF) as u8;
+    *vsp -= 1;
+    append_output(&[c]);
+    Ok(())
+}
+
+fn host_print_hex(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let n = vstack[*vsp - 1] as u32;
+    *vsp -= 1;
+    append_output(format!("0x{n:08X}\n").as_bytes());
     Ok(())
 }
 
@@ -104,6 +132,24 @@ fn host_sleep_ms(_vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Resul
 
 fn host_yield_fn(_vstack: &mut [i64], _vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
     Err(InterpError::Yielded)
+}
+
+fn host_uptime_ms(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp >= crate::interp::STACK_DEPTH { return Err(InterpError::StackOverflow); }
+    vstack[*vsp] = 0;  // stub: always 0 in test context
+    *vsp += 1;
+    Ok(())
+}
+
+#[macro_export]
+macro_rules! println {
+    ($($arg:tt)*) => {        
+        #[cfg(test)]
+        {
+            // Use standard println or a test-specific implementation
+            std::println!($($arg)*);
+        }
+    };
 }
 
 /// Instantiate `wasm`, wire up the kernel's `env` host functions
@@ -127,11 +173,15 @@ pub fn run_app(wasm: &[u8], args: &[i32]) -> Result<String, TestError> {
     if let Some(sec) = module.import_section {
         loader::for_each_func_import(sec, &mut |mod_name, func_name| {
             host_fns[import_count] = match (mod_name, func_name) {
-                ("env", "print")     => Some(host_print     as HostFn),
-                ("env", "print_int") => Some(host_print_int as HostFn),
-                ("env", "sleep_ms")  => Some(host_sleep_ms  as HostFn),
-                ("env", "yield")     => Some(host_yield_fn  as HostFn),
-                _                    => None,
+                ("env", "print")      => Some(host_print      as HostFn),
+                ("env", "print_int")  => Some(host_print_int  as HostFn),
+                ("env", "print_i64")  => Some(host_print_i64  as HostFn),
+                ("env", "print_char") => Some(host_print_char as HostFn),
+                ("env", "print_hex")  => Some(host_print_hex  as HostFn),
+                ("env", "sleep_ms")   => Some(host_sleep_ms   as HostFn),
+                ("env", "yield")      => Some(host_yield_fn   as HostFn),
+                ("env", "uptime_ms")  => Some(host_uptime_ms  as HostFn),
+                _                     => None,
             };
             import_count += 1;
         });

@@ -17,7 +17,7 @@ pub mod ip;
 pub mod tcp;
 pub mod udp;
 
-pub use arp::{ArpCache, ArpPacket};
+pub use arp::{ArpCache};
 pub use dhcp::DhcpClient;
 pub use ethernet::{EthFrame, ETH_TYPE_ARP, ETH_TYPE_IPV4};
 pub use ip::{IpAddr, Ipv4Packet, ip_chksum};
@@ -62,7 +62,7 @@ pub struct NetworkStack {
 
 impl NetworkStack {
     pub fn try_init() -> Option<Self> {
-        let mut net = VirtioNet::try_init()?;
+        let net = VirtioNet::try_init()?;
         let mac = net.get_mac();
 
         if !net.is_link_up() {

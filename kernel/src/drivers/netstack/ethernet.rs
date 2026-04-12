@@ -1,7 +1,5 @@
 // drivers/network/ethernet.rs — Ethernet frame handling
 
-use alloc::vec::Vec;
-
 
 pub const ETH_TYPE_IPV4: u16 = 0x0800;
 pub const ETH_TYPE_ARP:  u16 = 0x0806;

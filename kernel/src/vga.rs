@@ -9,12 +9,13 @@
 //!
 //! [`set_pixel`] bypasses the text cursor and writes a single pixel directly
 //! to the framebuffer; it handles BGR/RGB conversion automatically.
-
+#![allow(dead_code)]
 use bootloader_api::info::{FrameBufferInfo, PixelFormat};
 use spin::Mutex;
 
 use core::fmt::{Write};
 use alloc::string::String;
+
 
 // ANSI SGR — reset
 pub const RESET: &str = "\x1B[0m";

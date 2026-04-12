@@ -29,6 +29,7 @@ extern "C" {
     fn fs_read(name_ptr: i32, name_len: i32, buf_ptr: i32, buf_cap: i32) -> i32;
     fn print(ptr: i32, len: i32);
     fn print_int(n: i32);
+    fn uptime_ms() -> i32;
 }
 
 macro_rules! dbg_print {
@@ -86,11 +87,6 @@ impl Screen for WasmScreen {
         unsafe {
             fb_blit(self.buf.as_ptr() as i32, 256, 240);
             FRAME_COUNT += 1;
-            if FRAME_COUNT <= 3 {
-                dbg_print!("[nes] frame ");
-                dbg_int!(FRAME_COUNT as i32);
-                dbg_print!("\n");
-            }
         }
     }
 }
@@ -272,29 +268,51 @@ pub extern "C" fn main() {
     let cpu_ptr = &mut cpu as *mut CPU;
     cpu.mem.bus.attach(cpu_ptr, &mut ppu, &mut apu);
     cpu.powerup();
-
     dbg_print!("[nes] powerup done, running\n");
 
-    let mut steps: u32 = 0;
-    let mut last_reported_frame: u32 = 0;
+
+    let mut frame_counter: u32 = 0;
+    let mut last_report_frame: u32 = 0;
+    let mut last_report_time: i32 = unsafe { uptime_ms() };
+
     loop {
-        while cpu.cycle > 0 {
-            cpu.mem.bus.tick();
-        }
-        cpu.step();
-        steps += 1;
-        if steps >= 5000 {
-            steps = 0;
-            unsafe { sleep_ms(0); }
-            // Print a heartbeat every 60 frames so we know it's alive without
-            // flooding the terminal (which would scroll over the NES pixels).
-            let fc = unsafe { FRAME_COUNT };
-            if fc >= last_reported_frame + 60 {
-                last_reported_frame = fc;
-                dbg_print!("[nes] frame=");
-                dbg_int!(fc as i32);
-                dbg_print!("\n");
+        let frame_start = unsafe { uptime_ms() };
+
+        // Run exactly one NES frame worth of emulation.
+        while frame_counter == unsafe { FRAME_COUNT } {
+            while cpu.cycle > 0 {
+                cpu.mem.bus.tick();
             }
+            cpu.step();
+        }
+        frame_counter = unsafe { FRAME_COUNT };
+
+        let now = unsafe { uptime_ms() };
+
+        // Print timing stats once per 60 frames (~1 s at 60 fps).
+        if frame_counter - last_report_frame >= 60 {
+            let elapsed_total = now - last_report_time;
+            let frames_done   = frame_counter - last_report_frame;
+            // ms per frame = elapsed / frames (integer approximation)
+            let ms_per_frame  = elapsed_total / frames_done as i32;
+            dbg_print!("[nes] frame=");
+            dbg_int!(frame_counter as i32);
+            dbg_print!(" ms/frame=");
+            dbg_int!(ms_per_frame);
+            dbg_print!(" (target 16)\n");
+            last_report_frame = frame_counter;
+            last_report_time  = now;
+        }
+
+        // Yield to the cooperative scheduler so the shell and network stack
+        // stay responsive between frames.
+        unsafe { sleep_ms(0); }
+
+        // If we finished the frame faster than 16 ms, sleep the remainder to
+        // cap at ~60 fps and avoid busy-spinning.
+        let elapsed = now - frame_start;
+        if elapsed < 16 {
+            unsafe { sleep_ms(16 - elapsed); }
         }
     }
 }

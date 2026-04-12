@@ -227,7 +227,7 @@ fn host_uptime_ms(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Resul
 }
 
 /// `exit(code: i32)` — terminate the module cleanly (treated as normal return).
-fn host_exit(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+fn host_exit(_vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
     if *vsp < 1 { return Err(InterpError::StackUnderflow); }
     *vsp -= 1; // consume the code; we don't use it
     Err(InterpError::Exited)

@@ -240,7 +240,7 @@ impl VirtioBlk {
         let pages_needed = vq_pages_needed(q_size);
 
         // Scan our 6-page buffer for `pages_needed` physically-contiguous pages.
-        let buf_virt = unsafe { core::ptr::addr_of!(VIRTQ_BUF) as usize };
+        let buf_virt = { core::ptr::addr_of!(VIRTQ_BUF) as usize };
         let mut q_virt: Option<usize> = None;
         'outer: for i in 0..=(6 - pages_needed) {
             for j in 0..pages_needed - 1 {
