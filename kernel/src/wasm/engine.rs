@@ -80,7 +80,7 @@ static mut SLOT_MEM: [[u8; MAX_MEM_PAGES as usize * PAGE_SIZE]; MAX_INSTANCES] =
 // ── Host function registry ────────────────────────────────────────────────────
 
 /// Maximum number of host functions that can be registered.
-pub const MAX_HOST_FUNCS: usize = 32;
+pub const MAX_HOST_FUNCS: usize = 48;
 
 #[derive(Clone, Copy)]
 struct HostEntry {
@@ -490,6 +490,260 @@ fn host_fb_blit(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(
     Ok(())
 }
 
+fn host_net_listen(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let port = vstack[*vsp - 1] as u16;
+    *vsp -= 1;
+
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.tcp_listen(port)
+    }).unwrap_or(None);
+
+    vstack[*vsp] = match result {
+        Some(idx) => idx as i64,
+        None => -1i64,
+    };
+    *vsp += 1;
+    Ok(())
+}
+
+fn host_net_connect(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 2 { return Err(InterpError::StackUnderflow); }
+    let port = vstack[*vsp - 1] as u16;
+    let ip_bytes = vstack[*vsp - 2] as u32;
+    *vsp -= 2;
+
+    let ip = crate::drivers::netstack::IpAddr::from_u32(ip_bytes);
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.tcp_connect(ip, port)
+    }).unwrap_or(None);
+
+    vstack[*vsp] = match result {
+        Some(idx) => idx as i64,
+        None => -1i64,
+    };
+    *vsp += 1;
+    Ok(())
+}
+
+fn host_net_send(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 3 { return Err(InterpError::StackUnderflow); }
+    let len = vstack[*vsp - 1] as usize;
+    let ptr = vstack[*vsp - 2] as usize;
+    let handle = vstack[*vsp - 3] as usize;
+    *vsp -= 3;
+
+    let data = &mem[ptr..ptr.saturating_add(len)];
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.tcp_send(handle, data)
+    }).unwrap_or(Err(()));
+
+    vstack[*vsp] = match result {
+        Ok(n) => n as i64,
+        Err(_) => -1i64,
+    };
+    *vsp += 1;
+    Ok(())
+}
+
+fn host_net_recv(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 3 { return Err(InterpError::StackUnderflow); }
+    let cap = vstack[*vsp - 1] as usize;
+    let ptr = vstack[*vsp - 2] as usize;
+    let handle = vstack[*vsp - 3] as usize;
+    *vsp -= 3;
+
+    let buf = &mut mem[ptr..ptr.saturating_add(cap)];
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.tcp_recv(handle, buf)
+    }).unwrap_or(Err(()));
+
+    vstack[*vsp] = match result {
+        Ok(n) => n as i64,
+        Err(_) => -1i64,
+    };
+    *vsp += 1;
+    Ok(())
+}
+
+fn host_net_close(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let handle = vstack[*vsp - 1] as usize;
+    *vsp -= 1;
+
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.tcp_close(handle)
+    }).unwrap_or(Err(()));
+
+    vstack[*vsp] = match result {
+        Ok(()) => 0i64,
+        Err(_) => -1i64,
+    };
+    *vsp += 1;
+    Ok(())
+}
+
+fn host_net_set_ip(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let ip_bytes = vstack[*vsp - 1] as u32;
+    *vsp -= 1;
+
+    let ip = crate::drivers::netstack::IpAddr::from_u32(ip_bytes);
+    crate::drivers::netstack::with_network(|stack| {
+        stack.set_ip(ip);
+    });
+
+    vstack[*vsp] = 0i64;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `net_accept(listen_handle: i32) → i32`
+/// If the listening socket has completed a handshake, move the established
+/// connection into a new slot, reset the listener, and return the new handle.
+/// Returns -1 if the connection is not yet ready.
+fn host_net_accept(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let handle = vstack[*vsp - 1] as usize;
+    *vsp -= 1;
+
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.tcp_accept(handle)
+    }).unwrap_or(None);
+
+    vstack[*vsp] = match result {
+        Some(idx) => idx as i64,
+        None      => -1i64,
+    };
+    *vsp += 1;
+    Ok(())
+}
+
+/// `net_status(handle: i32) → i32`
+/// Returns the current TCP socket state:
+///   0 = closed/invalid, 1 = listening, 2 = handshaking, 3 = established,
+///   4 = half-closed / teardown
+fn host_net_status(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let handle = vstack[*vsp - 1] as usize;
+    *vsp -= 1;
+
+    let status = crate::drivers::netstack::with_network(|stack| {
+        stack.tcp_status(handle)
+    }).unwrap_or(0);
+
+    vstack[*vsp] = status as i64;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `net_get_ip() → i32`
+/// Return the kernel's current IPv4 address as a u32 (little-endian octets,
+/// same encoding as `net_connect`'s ip argument).  Returns 0 if DHCP has not
+/// yet bound an address.
+fn host_net_get_ip(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp >= STACK_DEPTH { return Err(InterpError::StackOverflow); }
+    let ip = crate::drivers::netstack::with_network(|stack| stack.get_ip()).unwrap_or(0);
+    vstack[*vsp] = ip as i64;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `net_udp_bind(port: i32) → i32`
+/// Bind a UDP socket to `port`.  Returns a handle (≥ 0) or -1 on failure.
+fn host_net_udp_bind(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let port = vstack[*vsp - 1] as u16;
+    *vsp -= 1;
+
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.udp_bind(port)
+    }).unwrap_or(None);
+
+    vstack[*vsp] = match result {
+        Some(idx) => idx as i64,
+        None      => -1i64,
+    };
+    *vsp += 1;
+    Ok(())
+}
+
+/// `net_udp_connect(handle: i32, ip: i32, port: i32) → i32`
+/// Set the remote address/port for a bound UDP socket so `net_udp_send` knows
+/// where to deliver datagrams.  Returns 0 on success, -1 on failure.
+fn host_net_udp_connect(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 3 { return Err(InterpError::StackUnderflow); }
+    let port     = vstack[*vsp - 1] as u16;
+    let ip_bytes = vstack[*vsp - 2] as u32;
+    let handle   = vstack[*vsp - 3] as usize;
+    *vsp -= 3;
+
+    let ip = crate::drivers::netstack::IpAddr::from_u32(ip_bytes);
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.udp_connect(handle, ip, port)
+    }).unwrap_or(Err(()));
+
+    vstack[*vsp] = match result { Ok(()) => 0i64, Err(_) => -1i64 };
+    *vsp += 1;
+    Ok(())
+}
+
+/// `net_udp_send(handle: i32, ptr: i32, len: i32) → i32`
+/// Send `len` bytes from linear memory via a UDP socket.
+/// Returns bytes sent (≥ 0) or -1 on error.
+fn host_net_udp_send(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 3 { return Err(InterpError::StackUnderflow); }
+    let len    = vstack[*vsp - 1] as usize;
+    let ptr    = vstack[*vsp - 2] as usize;
+    let handle = vstack[*vsp - 3] as usize;
+    *vsp -= 3;
+
+    let end  = ptr.saturating_add(len).min(mem.len());
+    let data = mem[ptr..end].to_vec();  // copy out before the closure borrows stack
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.udp_send(handle, &data)
+    }).unwrap_or(Err(()));
+
+    vstack[*vsp] = match result { Ok(n) => n as i64, Err(_) => -1i64 };
+    *vsp += 1;
+    Ok(())
+}
+
+/// `net_udp_recv(handle: i32, ptr: i32, cap: i32) → i32`
+/// Non-blocking receive into linear memory.
+/// Returns bytes received (≥ 0), 0 if the buffer is empty, or -1 on error.
+fn host_net_udp_recv(vstack: &mut [i64], vsp: &mut usize, mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 3 { return Err(InterpError::StackUnderflow); }
+    let cap    = vstack[*vsp - 1] as usize;
+    let ptr    = vstack[*vsp - 2] as usize;
+    let handle = vstack[*vsp - 3] as usize;
+    *vsp -= 3;
+
+    let end = ptr.saturating_add(cap).min(mem.len());
+    let buf = &mut mem[ptr..end];
+    let result = crate::drivers::netstack::with_network(|stack| {
+        stack.udp_recv(handle, buf)
+    }).unwrap_or(Err(()));
+
+    vstack[*vsp] = match result { Ok(n) => n as i64, Err(_) => 0i64 };
+    *vsp += 1;
+    Ok(())
+}
+
+/// `net_udp_close(handle: i32) → i32`
+/// Release a UDP socket slot.  Always returns 0.
+fn host_net_udp_close(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp < 1 { return Err(InterpError::StackUnderflow); }
+    let handle = vstack[*vsp - 1] as usize;
+    *vsp -= 1;
+
+    crate::drivers::netstack::with_network(|stack| stack.udp_close(handle));
+
+    vstack[*vsp] = 0i64;
+    *vsp += 1;
+    Ok(())
+}
+
 /// Register the kernel's built-in host functions.  Call once at boot before
 /// running any module.
 pub fn init_host_fns() {
@@ -516,6 +770,21 @@ pub fn init_host_fns() {
     register_host("env", "fb_set_pixel", host_fb_set_pixel);
     register_host("env", "fb_present",   host_fb_present);
     register_host("env", "fb_blit",      host_fb_blit);
+
+    register_host("net", "listen",      host_net_listen);
+    register_host("net", "connect",     host_net_connect);
+    register_host("net", "send",        host_net_send);
+    register_host("net", "recv",        host_net_recv);
+    register_host("net", "close",       host_net_close);
+    register_host("net", "set_ip",      host_net_set_ip);
+    register_host("net", "accept",      host_net_accept);
+    register_host("net", "status",      host_net_status);
+    register_host("net", "get_ip",      host_net_get_ip);
+    register_host("net", "udp_bind",    host_net_udp_bind);
+    register_host("net", "udp_connect", host_net_udp_connect);
+    register_host("net", "udp_send",    host_net_udp_send);
+    register_host("net", "udp_recv",    host_net_udp_recv);
+    register_host("net", "udp_close",   host_net_udp_close);
 }
 
 /// Print an i32 as decimal followed by a newline, without heap allocation.

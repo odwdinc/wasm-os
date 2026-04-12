@@ -6,7 +6,6 @@ extern crate alloc;
 mod drivers;
 mod fs;
 mod interrupts;
-mod jit;
 mod memory;
 mod scheduler;
 mod shell;
@@ -116,6 +115,21 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // Populate the in-memory file table from the mounted FAT volume so that
     // the wasm engine can call `fs::find_file` with a `'static` slice.
     fs::load_fat_files_to_table();
+
+    if drivers::netstack::try_init_network() {
+        // Spin-poll until DHCP binds (QEMU user-net responds in <1 ms).
+        // This keeps the boot log clean — IP appears before the shell prompt.
+         for _ in 0..100_000 {
+            let bound = drivers::netstack::with_network(|s| {
+                s.poll();
+                s.is_dhcp_bound()
+            });
+            if bound == Some(true) { break; }
+         }
+        println!("network: initialized");
+    } else {
+        println!("network: not available (no virtio-net device)");
+    }
 
     if let Some(hello) = fs::find_file("hello.wasm") {
         if let Err(e) = wasm::engine::run(hello, "main", &[]) {

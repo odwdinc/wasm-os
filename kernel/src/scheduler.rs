@@ -27,6 +27,9 @@ pub fn run() -> ! {
     let mut shell = crate::shell::input::ShellState::new();
 
     loop {
+        // ── Network receive pump ──────────────────────────────────────────────
+        crate::drivers::netstack::with_network(|s| { s.poll(); });
+
         // ── Shell turn ────────────────────────────────────────────────────────
         let had_input = crate::shell::input::poll_once(&mut shell);
 

@@ -320,31 +320,31 @@ The kernel is not a web server — WASM modules are.
 
 ### 1. virtio-net Driver
 
-* [ ] Detect virtio-net device via PCI enumeration
-* [ ] Initialize virtqueue (descriptor ring, available ring, used ring)
-* [ ] `net_send(buf, len)`, `net_recv(buf, len)` — raw Ethernet frames
+* [x] Detect virtio-net device via PCI enumeration
+* [x] Initialize virtqueue (descriptor ring, available ring, used ring)
+* [x] `net_send(buf, len)`, `net_recv(buf, len)` — raw Ethernet frames
 
 ---
 
 ### 2. TCP/IP Stack
 
-* [ ] Integrate `smoltcp` (no_std compatible) or implement minimal ARP + IP + TCP
-* [ ] DHCP client or static IP config
-* [ ] `tcp_connect(ip, port)`, `tcp_listen(port)`, `tcp_send`, `tcp_recv`, `tcp_close`
+* [x] Integrate `smoltcp` (no_std compatible) or implement minimal ARP + IP + TCP
+* [x] DHCP client or static IP config
+* [x] `tcp_connect(ip, port)`, `tcp_listen(port)`, `tcp_send`, `tcp_recv`, `tcp_close`
 
 ---
 
 ### 3. Socket Host Functions
 
-* [ ] Register `"net"."connect"`, `"net"."listen"`, `"net"."send"`, `"net"."recv"`, `"net"."close"`
-* [ ] Non-blocking recv returns 0 immediately if no data (caller should yield + retry)
-* [ ] Socket handles as `i32` (index into a fixed socket table)
+* [x] Register `"net"."connect"`, `"net"."listen"`, `"net"."send"`, `"net"."recv"`, `"net"."close"`
+* [x] Non-blocking recv returns 0 immediately if no data (caller should yield + retry)
+* [x] Socket handles as `i32` (index into a fixed socket table)
 
 ---
 
 ### 4. Demo Module
 
-* [ ] `httpd.wasm` — minimal HTTP/1.0 server in WAT/WASM
+* [ ] `httpd.wat` — minimal HTTP/1.0 server in WAT/WASM
 * [ ] Responds to `GET /` with `Hello from WASM-First OS!`
 
 ---
@@ -379,9 +379,9 @@ Interpreter remains as fallback for unsupported patterns.
 
 ### 1. Code Generation Infrastructure
 
-* [x] Emit x86_64 machine code into a fixed executable buffer (`static mut`)
-* [x] Mark buffer executable (`NX` bit management, or identity-map with exec permissions)
-* [x] Function prologue/epilogue (save callee-saved regs, set up frame)
+* [ ] Emit x86_64 machine code into a fixed executable buffer (`static mut`)
+* [ ] Mark buffer executable (`NX` bit management, or identity-map with exec permissions)
+* [ ] Function prologue/epilogue (save callee-saved regs, set up frame)
 
 ---
 
