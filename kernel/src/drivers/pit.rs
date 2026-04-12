@@ -1,7 +1,11 @@
 //! PIT (8253) driver + 8259 PIC remapping.
 //!
-//! After `init()` the timer fires at ~100 Hz and `ticks()` returns the
+//! After `init()` the timer fires at ~1000 Hz and `ticks()` returns the
 //! monotonically-increasing tick count.
+//!
+//! Call `calibrate_tsc()` once after `init()` to calibrate the TSC against
+//! one PIT tick.  After calibration, `uptime_ms()` returns sub-millisecond
+//! accurate elapsed time via RDTSC instead of the 10 ms-granular tick counter.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,6 +18,73 @@ static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
 /// Return the number of timer ticks since `init()` (~100 per second).
 pub fn ticks() -> u64 {
     TICK_COUNT.load(Ordering::Relaxed)
+}
+
+// ---------------------------------------------------------------------------
+// RDTSC-based high-resolution timer
+// ---------------------------------------------------------------------------
+
+/// TSC value captured at the start of the calibration tick.
+static TSC_BOOT: AtomicU64 = AtomicU64::new(0);
+/// Calibrated TSC frequency in MHz (cycles per microsecond).
+/// Zero means not yet calibrated — `uptime_ms` falls back to PIT ticks.
+static TSC_MHZ: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+fn rdtsc() -> u64 {
+    let lo: u32;
+    let hi: u32;
+    unsafe {
+        core::arch::asm!(
+            "rdtsc",
+            out("eax") lo,
+            out("edx") hi,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    ((hi as u64) << 32) | (lo as u64)
+}
+
+/// Return the calibrated TSC frequency in MHz (0 if not yet calibrated).
+pub fn tsc_mhz() -> u64 {
+    TSC_MHZ.load(Ordering::Relaxed)
+}
+
+/// Calibrate the TSC against one PIT tick (≈1 ms at 1000 Hz).
+///
+/// Spins waiting for two consecutive tick boundaries; the TSC delta over
+/// that interval gives the CPU frequency.  Must be called after `init()`.
+/// Safe to call multiple times — each call re-calibrates.
+pub fn calibrate_tsc() {
+    // Align to a tick boundary first, then measure the next full tick.
+    let t0 = TICK_COUNT.load(Ordering::Relaxed);
+    while TICK_COUNT.load(Ordering::Relaxed) == t0 {}
+
+    let tsc_start = rdtsc();
+    let t1 = TICK_COUNT.load(Ordering::Relaxed);
+    while TICK_COUNT.load(Ordering::Relaxed) == t1 {}
+    let tsc_end = rdtsc();
+
+    // One PIT tick ≈ 1 ms.  MHz = cycles / 1_000 (cycles per µs).
+    let delta = tsc_end.saturating_sub(tsc_start);
+    let mhz   = (delta / 1_000).max(1); // guard against zero
+    TSC_MHZ.store(mhz, Ordering::Relaxed);
+    TSC_BOOT.store(tsc_start, Ordering::Relaxed);
+}
+
+/// Milliseconds elapsed since `calibrate_tsc()` was called.
+///
+/// Accurate to < 1 ms.  Falls back to `ticks() * 10` if not yet calibrated.
+pub fn uptime_ms() -> i64 {
+    let mhz = TSC_MHZ.load(Ordering::Relaxed);
+    if mhz == 0 {
+        return (TICK_COUNT.load(Ordering::Relaxed).saturating_mul(1))
+            .min(i64::MAX as u64) as i64;
+    }
+    let boot = TSC_BOOT.load(Ordering::Relaxed);
+    let elapsed_cycles = rdtsc().saturating_sub(boot);
+    // ms = cycles / (MHz * 1_000)
+    (elapsed_cycles / (mhz * 1_000)).min(i64::MAX as u64) as i64
 }
 
 // ---------------------------------------------------------------------------
@@ -69,8 +140,8 @@ unsafe fn pic_remap() {
 
 const PIT_CHANNEL0: u16 = 0x40;
 const PIT_CMD:      u16 = 0x43;
-// 1 193 182 Hz / 100 ≈ 11 931
-const PIT_DIVISOR: u16 = 11_931;
+// 1 193 182 Hz / 1000 ≈ 1 193  (1 kHz → 1 ms per tick)
+const PIT_DIVISOR: u16 = 1_193;
 
 unsafe fn pit_init() {
     // Mode 2 (rate generator), lo/hi byte access, channel 0

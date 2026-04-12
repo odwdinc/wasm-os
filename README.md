@@ -21,6 +21,7 @@
 ## Current Status
 
 Sprints 1–4 (MVP) and A–E, G (runtime completeness, isolation, scheduling, persistent FS, networking, in-OS WAT assembler) are complete.
+Sprint F (JIT compilation) is in progress — detailed plan in [`JIT_Agile_plan.md`](JIT_Agile_plan.md). Target: NES emulator from 1200ms/frame → 16ms/frame (~75x speedup).
 
 The system boots, acquires an IP address via DHCP, accepts keyboard/serial input, mounts a FAT filesystem, executes real WASM modules, runs multiple modules concurrently as cooperative tasks, and serves HTTP over TCP from a WASM module.
 
@@ -195,8 +196,9 @@ Compile with `wat2wasm`, place under `userland/`, run `tools/wasm-pack.sh`.
 +-----------------------------+
 |     WASM Modules (.wasm)    |  ← userland/
 +-----------------------------+
-|  WASM Interpreter           |  ← kernel/src/wasm/
+|  WASM Runtime               |  ← kernel/src/wasm/, kernel/src/jit/
 |  - loader, engine, interp   |
+|  - JIT compiler (Sprint F)  |
 |  - host function registry   |
 |  - cooperative task layer   |
 +-----------------------------+
@@ -248,7 +250,7 @@ See [docs/wasm-runtime.md](docs/wasm-runtime.md) for the complete opcode table.
 | C | Cooperative scheduling: PIT timer, task queue, `task-run`/`task-kill`/`tasks` | Done |
 | D | Persistent filesystem: virtio-blk, FAT12/16/32, shell FS commands | Done |
 | E | Networking: virtio-net, TCP/IP stack, socket host functions, `httpd.wasm` | Done |
-| F | JIT compilation: x86_64 codegen, tiered execution | Planned |
+| F | JIT compilation: x86_64 codegen, interpreter fallback — see [JIT_Agile_plan.md](JIT_Agile_plan.md) | In Progress |
 | G | In-OS WAT assembler: edit, assemble, and run without host tools | Done |
 
 ---

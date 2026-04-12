@@ -374,9 +374,26 @@ Hello from WASM-First OS!
 Compile WASM functions to native x86_64 at instantiation time.
 Interpreter remains as fallback for unsupported patterns.
 
+> **This sprint has been superseded by a dedicated epic.**
+> The original high-level tasks below are preserved for context.
+> All active planning, deliverables, and sprint breakdown live in:
+>
+> **[`JIT_Agile_plan.md`](JIT_Agile_plan.md)**
+>
+> That document covers Sprints 0–6:
+> - Sprint 0: Boot prerequisites (`make_jit_executable`, buffer sizing)
+> - Sprint 1: Instrumentation & baseline (RDTSC timer, opcode counters)
+> - Sprint 2: Interpreter hot-loop micro-optimisations (~3x before JIT)
+> - Sprint 3: JIT foundation — calling convention, arithmetic, shadow-mode correctness
+> - Sprint 4: JIT control flow — block/loop/if/br, type conversions, sign-extension
+> - Sprint 5: JIT memory ops + full opcode coverage (i64, float bit-pattern, memory.grow)
+> - Sprint 6: Frame pacing, fb_blit audit, reach 16ms/frame target
+>
+> Target: NES emulator (`nes-wasm`) from **1200ms/frame → 16ms/frame** (~75x speedup).
+
 ---
 
-## Tasks
+## Original Tasks (superseded — see JIT_Agile_plan.md)
 
 ### 1. Code Generation Infrastructure
 
@@ -415,6 +432,12 @@ Interpreter remains as fallback for unsupported patterns.
 ```
 > run fib-jit.wasm
 fib(35) = 9227465  [interpreter: 4200ms, jit: 80ms]
+```
+
+NES emulator milestone (from JIT_Agile_plan.md):
+
+```
+[nes] frame=360 ms/frame=16 (target 16)
 ```
 
 ---

@@ -216,12 +216,19 @@ fn host_print_hex(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Resul
     Ok(())
 }
 
-/// `uptime_ms() → i32` — milliseconds since boot (saturates at i32::MAX ~25 days).
+/// `uptime_ms() → i32` — milliseconds since TSC calibration (sub-ms accurate).
 fn host_uptime_ms(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
     if *vsp >= STACK_DEPTH { return Err(InterpError::StackOverflow); }
-    // PIT fires at ~100 Hz → each tick ≈ 10 ms.
-    let ms = crate::drivers::pit::ticks().saturating_mul(10).min(i32::MAX as u64) as i64;
+    let ms = crate::drivers::pit::uptime_ms().min(i32::MAX as i64);
     vstack[*vsp] = ms;
+    *vsp += 1;
+    Ok(())
+}
+
+/// `wasm_opcount() → i64` — total WASM opcodes dispatched since boot.
+fn host_wasm_opcount(vstack: &mut [i64], vsp: &mut usize, _mem: &mut [u8]) -> Result<(), InterpError> {
+    if *vsp >= STACK_DEPTH { return Err(InterpError::StackOverflow); }
+    vstack[*vsp] = unsafe { crate::wasm::interp::OPCODE_COUNT as i64 };
     *vsp += 1;
     Ok(())
 }
@@ -759,7 +766,8 @@ pub fn init_host_fns() {
     register_host("env", "print_hex",  host_print_hex);
     register_host("env", "yield",      host_yield);
     register_host("env", "sleep_ms",   host_sleep_ms);
-    register_host("env", "uptime_ms",  host_uptime_ms);
+    register_host("env", "uptime_ms",   host_uptime_ms);
+    register_host("env", "wasm_opcount", host_wasm_opcount);
     register_host("env", "exit",       host_exit);
     register_host("env", "read_char",  host_read_char);
     register_host("env", "read_line",  host_read_line);

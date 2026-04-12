@@ -6,6 +6,7 @@ extern crate alloc;
 mod drivers;
 mod fs;
 mod interrupts;
+mod jit;
 mod memory;
 mod scheduler;
 mod shell;
@@ -90,6 +91,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     };
     println!("memory::init");
     memory::init(phys_mem_off);
+    // Mark JIT buffer pages executable now that page-table walking is available.
+    // Must be after memory::init() (find_pte needs the phys_mem_offset) and
+    // before scheduler::run() (JIT'd fn ptrs may be called from tasks).
+    jit::make_jit_executable();
+    println!("jit: code buffer marked executable ({} KiB)", crate::jit::JIT_BUF_SIZE / 1024);
+    // Calibrate RDTSC against one PIT tick for sub-ms uptime_ms() accuracy.
+    drivers::pit::calibrate_tsc();
+    println!("pit: TSC calibrated ({} MHz)", drivers::pit::tsc_mhz());
     // Mount FAT filesystem — virtio-blk for true persistence, ramdisk fallback.
     let mounted_virtio = if let Some(blk) = drivers::virtio_blk::VirtioBlk::try_init() {
         if fs::fat::mount_virtio(blk) {
@@ -132,11 +141,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
 
 
-    if let Some(hello) = fs::find_file("hello.wasm") {
-        if let Err(e) = wasm::engine::run(hello, "main", &[]) {
-            println!("wasm boot error: {}", e.as_str());
-        }
-    }
+    // if let Some(hello) = fs::find_file("hello.wasm") {
+    //     if let Err(e) = wasm::engine::run(hello, "main", &[]) {
+    //         println!("wasm boot error: {}", e.as_str());
+    //     }
+    // }
     println!("Type 'help' for commands.");
     scheduler::run();
 }

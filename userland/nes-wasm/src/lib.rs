@@ -30,6 +30,7 @@ extern "C" {
     fn print(ptr: i32, len: i32);
     fn print_int(n: i32);
     fn uptime_ms() -> i32;
+    fn wasm_opcount() -> i64;
 }
 
 macro_rules! dbg_print {
@@ -273,7 +274,8 @@ pub extern "C" fn main() {
 
     let mut frame_counter: u32 = 0;
     let mut last_report_frame: u32 = 0;
-    let mut last_report_time: i32 = unsafe { uptime_ms() };
+    let mut last_report_time: i32  = unsafe { uptime_ms() };
+    let mut last_report_ops:  i64  = unsafe { wasm_opcount() };
 
     loop {
         let frame_start = unsafe { uptime_ms() };
@@ -295,13 +297,28 @@ pub extern "C" fn main() {
             let frames_done   = frame_counter - last_report_frame;
             // ms per frame = elapsed / frames (integer approximation)
             let ms_per_frame  = elapsed_total / frames_done as i32;
+
+            let ops_now   = unsafe { wasm_opcount() };
+            let ops_delta = ops_now - last_report_ops;
+            // ops/frame and ops/sec (elapsed_total is ms, so *1000 → ops/sec)
+            let ops_per_frame = if frames_done > 0 { ops_delta / frames_done as i64 } else { 0 };
+            let ops_per_sec   = if elapsed_total > 0 { ops_delta * 1000 / elapsed_total as i64 } else { 0 };
+
             dbg_print!("[nes] frame=");
             dbg_int!(frame_counter as i32);
             dbg_print!(" ms/frame=");
             dbg_int!(ms_per_frame);
-            dbg_print!(" (target 16)\n");
+            dbg_print!(" ops/frame=");
+            // ops/frame and ops/sec may exceed i32 — print as i32 truncated for now
+            dbg_int!(ops_per_frame as i32);
+            dbg_print!(" ops/sec=");
+            dbg_int!(ops_per_sec as i32);
+            dbg_print!(" (target 16ms)\n");
+
             last_report_frame = frame_counter;
             last_report_time  = now;
+            last_report_ops   = ops_now;
+
         }
 
         // Yield to the cooperative scheduler so the shell and network stack
